@@ -43,7 +43,6 @@ classifiers = [
 dependencies = [
     # Core ML/AI libraries
     "torch>=2.9.1,<2.11",
-    "triton<3.6.0", # triton 3.6.0 has a compatibility issue with torch.compile
     "torchaudio",
     "torchvision",
     "torchdata",
