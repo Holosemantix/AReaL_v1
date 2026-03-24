@@ -5,7 +5,7 @@ from dataclasses import MISSING as dataclass_missing
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
 
 import uvloop
 import yaml
@@ -28,11 +28,20 @@ uvloop.install()
 
 logger = logging.getLogger("CLIArgs")
 
+ConfigT = TypeVar("ConfigT")
+
 
 @dataclass
 class NormConfig:
     """Configuration for reward/advantage normalization."""
 
+    denominator: str | None = field(
+        default="std",
+        metadata={
+            "help": "denominator for normalization. ('std': GRPO, 'k': MaxRL, 'n': REINFORCE)",
+            "choices": ["batch", "group", None],
+        },
+    )
     mean_level: str | None = field(
         default="batch",
         metadata={
@@ -198,6 +207,13 @@ class GenerationHyperparameters:
         default=False,
         metadata={
             "help": "Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are auto ignored."
+        },
+    )
+    # [新增] 发给底层引擎的请求参数：获取输入 prompt 的对数概率
+    prompt_logprobs: int | None = field(
+        default=None,
+        metadata={
+            "help": "Number of logprobs to return for prompt tokens. Set to 1 to get exact prompt token logprobs."
         },
     )
     # NOTE: to add new parameters, please correctly handle them in the `to_openai_args_dict` method.
@@ -2210,9 +2226,7 @@ def to_structured_cfg(cfg, config_cls):
     return cfg
 
 
-def load_expr_config[ConfigT](
-    argv: list[str], config_cls: type[ConfigT]
-) -> tuple[ConfigT, str]:
+def load_expr_config(argv: list[str], config_cls: type[ConfigT]) -> tuple[ConfigT, str]:
     cfg, config_file = parse_cli_args(argv)
     cfg = to_structured_cfg(cfg, config_cls=config_cls)
     cfg = OmegaConf.to_object(cfg)
