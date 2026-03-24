@@ -749,6 +749,7 @@ class RemoteInfEngine(InferenceEngine):
         accumulated_output_logprobs = []
         accumulated_versions = []
         accumulated_routed_experts: list[np.ndarray] = []
+        accumulated_input_logprobs = []
 
         # A single "rid" shares the same server to allow KV cache reuse
         if req.rid in self.rid_to_address:
@@ -826,6 +827,16 @@ class RemoteInfEngine(InferenceEngine):
             if gen_result.routed_experts is not None:
                 accumulated_routed_experts.append(gen_result.routed_experts)
 
+            # input_logprobs
+            if hasattr(gen_result, "input_logprobs") and gen_result.input_logprobs:
+                has_valid_data = any(
+                    val is not None and val != 0.0 and val != -100.0 for val in gen_result.input_logprobs)
+                current_is_invalid = not accumulated_input_logprobs or all(
+                    val is None or val == 0.0 or val == -100.0 for val in accumulated_input_logprobs)
+
+                if has_valid_data or current_is_invalid:
+                    accumulated_input_logprobs = gen_result.input_logprobs
+
             # Update request for next iteration
             req.input_ids += gen_result.output_tokens
             req.gconfig.max_new_tokens -= len(gen_result.output_tokens)
@@ -858,6 +869,7 @@ class RemoteInfEngine(InferenceEngine):
             output_tokens=accumulated_output_tokens,
             output_logprobs=accumulated_output_logprobs,
             output_versions=accumulated_versions,
+            input_logprobs=accumulated_input_logprobs,
             stop_reason=stop_reason,
             latency=latency,
             ttft=latency,  # Simplified for non-streaming

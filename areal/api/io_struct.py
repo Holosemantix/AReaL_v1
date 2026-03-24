@@ -62,6 +62,7 @@ class ModelResponse:
     # outputs
     input_tokens: list[int] = field(default_factory=list)
     output_tokens: list[int] = field(default_factory=list)
+    input_logprobs: list[float] = field(default_factory=list)
     output_logprobs: list[float] = field(default_factory=list)
     output_versions: list[int] = field(default_factory=list)
     stop_reason: Literal["length", "stop", "tool_calls", "abort"] = "stop"
@@ -273,6 +274,7 @@ class HttpGenerationResult:
 
     output_tokens: list[int]
     output_logprobs: list[float]
+    input_logprobs: list[float]
     stop_reason: str
     routed_experts: np.ndarray | None = None
 

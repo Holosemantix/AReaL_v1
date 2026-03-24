@@ -79,6 +79,14 @@ class SGLangBackend:
                     "LoRA name (gconfig.lora_name) is required when use_lora is enabled."
                 )
             payload["lora_path"] = get_versioned_lora_name(lora_name, version)
+        # Add return_prompt_logprobs to payload if set
+        if getattr(gconfig, "prompt_logprobs", None) is not None:
+            target_len = req.metadata.get("ig_target_len")
+            tail_len = req.metadata.get("tail_len")
+            if target_len is not None:
+                payload["logprob_start_len"] = max(0, len(req.input_ids) - target_len - tail_len)
+            else:
+                payload["logprob_start_len"] = 0
 
         return HttpRequest(endpoint="/generate", payload=payload)
 
@@ -113,9 +121,20 @@ class SGLangBackend:
         output_tokens = [x[1] for x in meta_info["output_token_logprobs"]]
         output_logprobs = [x[0] for x in meta_info["output_token_logprobs"]]
 
+        # Extract input_logprobs information if available
+        input_logprobs = []
+        if "prompt_logprobs" in meta_info and meta_info["prompt_logprobs"]:
+            input_logprobs = [x[0] if isinstance(x, (list, tuple)) else x for x in meta_info["prompt_logprobs"]]
+        elif "input_token_logprobs" in meta_info and meta_info["input_token_logprobs"]:
+            input_logprobs = [x[0] if isinstance(x, (list, tuple)) else x for x in meta_info["input_token_logprobs"]]
+
+        # -100.0 意味着 e^-100 ≈ 0.0 (接近 0% 的概率)，这才是符合实际物理意义的惩罚/兜底值。
+        input_logprobs = [val if val is not None else -100.0 for val in input_logprobs]
+
         return HttpGenerationResult(
             output_tokens=output_tokens,
             output_logprobs=output_logprobs,
+            input_logprobs=input_logprobs,
             stop_reason=stop_reason,
             routed_experts=routed_experts,
         )

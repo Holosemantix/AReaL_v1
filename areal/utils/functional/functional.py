@@ -1,9 +1,13 @@
 import functools
-from typing import Any
+from typing import Any, Dict, List, Union, Tuple
+import logging
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch.distributed as dist
+
+logger = logging.getLogger(__name__)
 
 
 @torch.no_grad()
@@ -494,3 +498,489 @@ def reward_overlong_penalty(
 
     data["rewards"] = reward_score
     return data
+
+
+# =============================================================================
+# New Functions for Decomposed IG / PRM Reward Calculation
+# =============================================================================
+def build_ig_probe_batches(
+        data: Dict[str, Any],
+        mini_batch_size: int,
+        sep_token_id: Union[List[int], List[List[int]]],
+        pad_token_id: int,
+        step_separation_mode: str = "separator",
+        uncertainty_threshold: float = -1.5,
+        min_step_tokens: int = 5,
+        max_step_tokens: int = 128  # [新增] 限制最大截断区间
+) -> Tuple[List[Dict[str, Any]], List[Any]]:
+    input_ids = data["input_ids"]
+    loss_mask = data["loss_mask"]
+    outcome_rewards = data["rewards"]
+
+    behavior_logprobs = data.get("logprobs", None)
+
+    ig_gt_ids_batch = data["ig_gt_ids"]
+    ig_bridge_len_batch = data["ig_bridge_len"]
+    ig_gt_len_batch = data["ig_gt_len"]
+
+    batch_size = input_ids.shape[0]
+    device = input_ids.device
+
+    all_probes_info = []
+
+    for i in range(batch_size):
+        nonzero_indices = torch.nonzero(loss_mask[i])
+        if len(nonzero_indices) > 0:
+            prompt_len = nonzero_indices[0].item()
+        else:
+            prompt_len = len(input_ids[i])
+
+        curr_input_ids = input_ids[i]
+        curr_ig_gt_ids = ig_gt_ids_batch[i]
+        curr_bridge_len = ig_bridge_len_batch[i]
+        curr_gt_len = ig_gt_len_batch[i]
+        curr_outcome = outcome_rewards[i]
+
+        curr_logprobs = None
+        if step_separation_mode == "uncertainty" and behavior_logprobs is not None:
+            curr_logprobs = behavior_logprobs[i]
+
+        probes_seqs, metadata, step_end_indices = _prepare_single_sample_probes(
+            input_ids=curr_input_ids,
+            prompt_len=prompt_len,
+            ig_gt_ids=curr_ig_gt_ids,
+            ig_bridge_len=curr_bridge_len,
+            ig_gt_len=curr_gt_len,
+            sep_token_id=sep_token_id,
+            pad_token_id=pad_token_id,
+            step_separation_mode=step_separation_mode,
+            logprobs=curr_logprobs,
+            uncertainty_threshold=uncertainty_threshold,
+            min_step_tokens=min_step_tokens,
+            max_step_tokens=max_step_tokens  # [新增] 传入提取逻辑
+        )
+
+        all_probes_info.append({
+            "sample_idx": i,
+            "probes_seqs": probes_seqs,
+            "metadata": metadata,
+            "step_end_indices": step_end_indices,
+            "outcome_reward": curr_outcome,
+            "num_probes": len(probes_seqs),
+            "gt_len": curr_gt_len.item(),
+            "prompt_len": prompt_len
+        })
+
+    if batch_size > 0:
+        if all_probes_info[0]["num_probes"] == 0:
+            logger.warning(
+                f"[IG-Debug] No steps detected for sample 0! "
+                f"Mode: {step_separation_mode}. "
+                f"Input IDs sample (last 20): {input_ids[0, -20:].tolist()}"
+            )
+        elif logger.isEnabledFor(logging.INFO):
+            logger.info(
+                f"[IG-Debug] Detected {all_probes_info[0]['num_probes']} steps for sample 0 (Mode: {step_separation_mode}).")
+
+    flat_probes_seqs = []
+    flat_metadata = []
+    current_probe_idx = 0
+
+    for info in all_probes_info:
+        seqs = info["probes_seqs"]
+        info["start_probe_idx"] = current_probe_idx
+        flat_probes_seqs.extend(seqs)
+        flat_metadata.extend(info["metadata"])
+        current_probe_idx += len(seqs)
+
+    probe_batches = []
+    total_probes = len(flat_probes_seqs)
+
+    if total_probes > 0:
+        for i in range(0, total_probes, mini_batch_size):
+            chunk_seqs = flat_probes_seqs[i: i + mini_batch_size]
+
+            max_len = max([seq.size(1) for seq in chunk_seqs])
+            padded_chunk_inputs = []
+            for seq in chunk_seqs:
+                curr_len = seq.size(1)
+                pad_len = max_len - curr_len
+                if pad_len > 0:
+                    padded_seq = F.pad(seq, (0, pad_len), value=pad_token_id)
+                else:
+                    padded_seq = seq
+                padded_chunk_inputs.append(padded_seq)
+
+            batch_input_ids = torch.cat(padded_chunk_inputs, dim=0)
+            batch_attention_mask = (batch_input_ids != pad_token_id).long()
+            batch_position_ids = torch.arange(max_len, device=device).unsqueeze(0).expand(len(chunk_seqs), -1)
+
+            probe_data = {
+                "input_ids": batch_input_ids,
+                "attention_mask": batch_attention_mask,
+                "position_ids": batch_position_ids
+            }
+            probe_batches.append(probe_data)
+
+    full_metadata = {
+        "all_probes_info": all_probes_info,
+        "flat_metadata": flat_metadata
+    }
+
+    return probe_batches, full_metadata
+
+
+def assign_ig_rewards(
+        data: Dict[str, Any],
+        logprobs_list: List[torch.Tensor],
+        metadata_dict: Dict[str, Any],
+        beta: float = 0.5,
+        use_peak_selection: bool = False,
+        use_watermark_selection: bool = False,  # [新增参数] 最大单调递增子序列过滤
+        reward_mode: str = "prob_diff"
+) -> Dict[str, Any]:
+    input_ids = data["input_ids"]
+    device = input_ids.device
+    all_probes_info = metadata_dict["all_probes_info"]
+    flat_metadata = metadata_dict["flat_metadata"]
+
+    # --- 核心改造：独立初始化结构分、逻辑分与显式Mask ---
+    if "token_level_rewards" not in data:
+        data["token_level_rewards"] = torch.zeros_like(input_ids, dtype=torch.float32, device=device)
+    if "step_boundary_mask" not in data:
+        data["step_boundary_mask"] = torch.ones_like(input_ids, dtype=torch.float32, device=device)
+    if "token_level_len_penalties" not in data:
+        data["token_level_len_penalties"] = torch.zeros_like(input_ids, dtype=torch.float32, device=device)
+    # 新增：显式的步骤掩码。之前使用 (raw_step_rewards != 0) 过滤，
+    # 但由于 Hindsight 约束可能会把无效步骤的奖励强行置为 0.0，这会导致步骤被漏算，
+    # 破坏了 RMS Norm 的基数计算，现在我们使用显式的 1.0/0.0 mask 记录有效步骤。
+    if "step_reward_mask" not in data:
+        data["step_reward_mask"] = torch.zeros_like(input_ids, dtype=torch.float32, device=device)
+
+    all_log_prob_sums = []
+    current_flat_idx = 0
+
+    for batch_logprobs in logprobs_list:
+        batch_size = batch_logprobs.shape[0]
+
+        for k in range(batch_size):
+            if current_flat_idx >= len(flat_metadata):
+                break
+
+            start, end = flat_metadata[current_flat_idx]
+            seq_len = batch_logprobs.shape[1]
+            valid_end = min(end - 1, seq_len)
+            valid_start = max(0, start - 1)
+
+            if valid_start < valid_end:
+                lp_sum = batch_logprobs[k, valid_start:valid_end].sum()
+            else:
+                lp_sum = torch.tensor(0.0, device=device)
+
+            all_log_prob_sums.append(lp_sum)
+            current_flat_idx += 1
+
+    for info in all_probes_info:
+        start_idx = info["start_probe_idx"]
+        num = info["num_probes"]
+        step_end_indices = info["step_end_indices"]
+        outcome_reward = info["outcome_reward"]
+        sample_idx = info["sample_idx"]
+        gt_len = info.get("gt_len", 1)
+        prompt_len = info.get("prompt_len", 0)
+
+        if num == 0: continue
+        if start_idx + num > len(all_log_prob_sums):
+            logger.error(f"[IG-Error] Missing logprobs for sample {sample_idx}")
+            continue
+
+        sample_log_probs = all_log_prob_sums[start_idx: start_idx + num]
+
+        # 提取真实步长 (Token 数量)
+        step_lengths = []
+        last_idx = prompt_len - 1
+        for idx in step_end_indices:
+            step_lengths.append(idx - last_idx)
+            last_idx = idx
+
+        # 获取解耦后的 逻辑奖励 和 长度惩罚
+        calculated_rewards, calculated_penalties = _compute_rewards_logic(
+            log_probs=sample_log_probs,
+            outcome_reward=outcome_reward,
+            beta=beta,
+            use_peak_selection=use_peak_selection,
+            use_watermark_selection=use_watermark_selection,  # 传入底层
+            reward_mode=reward_mode,
+            gt_len=gt_len,
+            step_lengths=step_lengths
+        )
+
+        for r, p, idx in zip(calculated_rewards, calculated_penalties, step_end_indices):
+            if idx > 0 and idx <= input_ids.shape[1]:
+                # 纯粹的逻辑跃升奖励
+                data["token_level_rewards"][sample_idx, idx - 1] += r
+                # 纯粹的结构长度惩罚
+                data["token_level_len_penalties"][sample_idx, idx - 1] += p
+                # 显式打上有效步骤标记（即使 r == 0.0）
+                data["step_reward_mask"][sample_idx, idx - 1] = 1.0
+
+                if idx < input_ids.shape[1]:
+                    data["step_boundary_mask"][sample_idx, idx] = 0.0
+
+    return data
+
+
+def _prepare_single_sample_probes(
+        input_ids,
+        prompt_len,
+        ig_gt_ids,
+        ig_bridge_len,
+        ig_gt_len,
+        sep_token_id: Union[List[int], List[List[int]]],
+        pad_token_id: int,
+        step_separation_mode: str = "separator",
+        logprobs: torch.Tensor | None = None,
+        uncertainty_threshold: float = -1.5,
+        min_step_tokens: int = 5,
+        max_step_tokens: int = 128  # [新增] 防止 Qwen BPE 粘连导致的无节制膨胀
+):
+    if input_ids.dim() == 1: input_ids = input_ids.unsqueeze(0)
+    if ig_gt_ids.dim() == 1: ig_gt_ids = ig_gt_ids.unsqueeze(0)
+
+    q_tensor = input_ids[:, :prompt_len]
+    reasoning_ids = input_ids[:, prompt_len:]
+    reasoning_list = reasoning_ids[0].tolist()
+
+    step_rel_indices = []
+
+    if step_separation_mode == "separator":
+        separator_candidates = []
+        if len(sep_token_id) > 0:
+            if isinstance(sep_token_id[0], list):
+                separator_candidates = sep_token_id
+            else:
+                separator_candidates = [sep_token_id]
+
+        if len(separator_candidates) > 0:
+            i = 0
+            last_cut_idx = -1  # 记录上一次切分的位置
+            while i < len(reasoning_list):
+                matched = False
+                for cand in separator_candidates:
+                    cand_len = len(cand)
+                    if i + cand_len <= len(reasoning_list):
+                        if reasoning_list[i: i + cand_len] == cand:
+                            # 确保切分出来的 step 长度 >= min_step_tokens
+                            end_idx = i + cand_len - 1
+                            if end_idx - last_cut_idx >= min_step_tokens:
+                                step_rel_indices.append(end_idx)
+                                last_cut_idx = end_idx
+                            i += cand_len
+                            matched = True
+                            break
+                if not matched:
+                    # [新增] 兜底保护机制：如果距离上一次切分已经超过 max_step_tokens，强制切断
+                    # 避免因为 Qwen 的 Tokenizer 将 \n 和其他符号合并，导致整个序列无法正常切分
+                    if (i - last_cut_idx) >= max_step_tokens:
+                        step_rel_indices.append(i)
+                        last_cut_idx = i
+                    i += 1
+
+    elif step_separation_mode == "uncertainty":
+        if logprobs is not None:
+            if logprobs.dim() == 1:
+                reasoning_logprobs = logprobs[prompt_len:]
+            else:
+                reasoning_logprobs = logprobs.squeeze()[prompt_len:]
+
+            last_idx = -1
+            for i in range(len(reasoning_logprobs)):
+                val = reasoning_logprobs[i].item()
+                if val < uncertainty_threshold:
+                    potential_end_idx = i - 1
+                    if potential_end_idx - last_idx >= min_step_tokens:
+                        if potential_end_idx >= 0:
+                            step_rel_indices.append(potential_end_idx)
+                            last_idx = potential_end_idx
+                # [新增] 同样在不确定度模式下加入最大步长保护
+                elif (i - last_idx) >= max_step_tokens:
+                    step_rel_indices.append(i)
+                    last_idx = i
+        else:
+            logger.warning("[IG] Uncertainty mode selected but logprobs not provided.")
+
+    if reasoning_ids.shape[1] > 0:
+        final_idx = reasoning_ids.shape[1] - 1
+        if not step_rel_indices or step_rel_indices[-1] != final_idx:
+            step_rel_indices.append(final_idx)
+
+    suffix_tensor = ig_gt_ids
+    q_len = q_tensor.shape[1]
+
+    suffix_gt_start_idx = ig_bridge_len.item()
+    suffix_gt_end_idx = suffix_gt_start_idx + ig_gt_len.item()
+
+    probe_seqs = []
+    metadata = []
+    step_abs_indices = []
+
+    init_seq = torch.cat([q_tensor, suffix_tensor], dim=1)
+    target_start_0 = q_len + suffix_gt_start_idx
+    target_end_0 = q_len + suffix_gt_end_idx
+    probe_seqs.append(init_seq)
+    metadata.append((target_start_0, target_end_0))
+
+    for rel_end_idx in step_rel_indices:
+        current_cot = reasoning_ids[:, :rel_end_idx + 1]
+        probe_seq = torch.cat([q_tensor, current_cot, suffix_tensor], dim=1)
+        prefix_len = q_len + current_cot.shape[1]
+        target_start = prefix_len + suffix_gt_start_idx
+        target_end = prefix_len + suffix_gt_end_idx
+        probe_seqs.append(probe_seq)
+        metadata.append((target_start, target_end))
+        step_abs_indices.append(prompt_len + rel_end_idx)
+
+    return probe_seqs, metadata, step_abs_indices
+
+
+def _compute_rewards_logic(
+        log_probs,
+        outcome_reward,
+        beta,
+        use_peak_selection=False,
+        use_watermark_selection=False,
+        max_abs_step_reward=5.0,
+        reward_mode="prob_diff",
+        gt_len=1,
+        step_lengths=None
+):
+    T = len(log_probs) - 1
+    is_correct = outcome_reward > 0
+    final_rewards = []
+    final_penalties = []
+    step_probs = []
+    device = log_probs[0].device if isinstance(log_probs[0], torch.Tensor) else torch.device("cpu")
+    log_probs = [torch.as_tensor(lp, dtype=torch.float32, device=device) for lp in log_probs]
+
+    norm_len = max(1, gt_len)
+    min_step_len = 20
+    max_step_len = 256
+    len_penalty_factor = 0.002
+
+    # 提取 P_0 作为初始水位
+    p_0_tensor = torch.exp(log_probs[0] / norm_len)
+    initial_watermark = p_0_tensor.item() if isinstance(p_0_tensor, torch.Tensor) else p_0_tensor
+
+    for t in range(1, T + 1):
+        raw_r_t = torch.tensor(0.0).to(device) if device else 0.0
+
+        p_t_absolute = torch.exp(log_probs[t] / norm_len)
+        step_probs.append(p_t_absolute)
+
+        if t == T:
+            raw_r_t = torch.tensor(0.0).to(device) if device else 0.0
+        else:
+            if reward_mode == "prob_diff":
+                p_t = torch.exp(log_probs[t] / norm_len)
+                p_prev = torch.exp(log_probs[t - 1] / norm_len)
+                raw_r_t = p_t - p_prev
+
+            elif reward_mode == "prob_diff_hindsight":
+                p_t = torch.exp(log_probs[t] / norm_len)
+                p_prev = torch.exp(log_probs[t - 1] / norm_len)
+                raw_r_t = p_t - p_prev
+
+                if not is_correct:
+                    raw_r_t = torch.clamp(raw_r_t, max=0.0)
+
+            elif reward_mode == "prob":
+                if is_correct:
+                    raw_r_t = torch.exp(log_probs[t] / norm_len)
+            else:
+                if is_correct:
+                    raw_r_t = log_probs[t] - log_probs[t - 1]
+
+        clipped_r_t = torch.clamp(raw_r_t, -max_abs_step_reward, max_abs_step_reward)
+
+        # [修改] 暂时不用长度惩罚，强置为 0.0
+        len_penalty = 0.0
+        # if step_lengths is not None and t - 1 < len(step_lengths):
+        #     s_len = step_lengths[t - 1]
+        #     if s_len < min_step_len:
+        #         len_penalty = -len_penalty_factor * (min_step_len - s_len)
+        #     elif s_len > max_step_len:
+        #         len_penalty = -len_penalty_factor * (s_len - max_step_len)
+
+        final_rewards.append(clipped_r_t)
+        final_penalties.append(torch.tensor(len_penalty).to(device) if device else len_penalty)
+
+    def get_val(idx):
+        r = final_rewards[idx]
+        return r.item() if isinstance(r, torch.Tensor) else r
+
+    def get_prob(idx):
+        p = step_probs[idx]
+        return p.item() if isinstance(p, torch.Tensor) else p
+
+    # 1. 最高水位线 (Highest Watermark) 过滤与结算逻辑
+    # [修改] 不再区分是否正确，所有轨迹均参与水位线计算以提供密集的正面引导
+    if use_watermark_selection and len(final_rewards) > 0:
+        new_rewards = []
+        new_penalties = []
+        running_max = initial_watermark
+
+        for i in range(len(final_rewards)):
+            # 强制保留最后一步（输出答案）无过程奖励的规则
+            if i == len(final_rewards) - 1:
+                new_rewards.append(torch.tensor(0.0).to(device) if device else 0.0)
+                new_penalties.append(final_penalties[i])
+                continue
+
+            # (此处的 if not is_correct 阻断逻辑已被彻底移除)
+
+            p_t = get_prob(i)
+            # 核心机制：只有当前概率突破历史最高水位线，才发放严密的增量奖励
+            if p_t > running_max:
+                raw_r = p_t - running_max
+                clipped_r = torch.clamp(
+                    torch.tensor(raw_r, dtype=torch.float32, device=device) if device else raw_r,
+                    -max_abs_step_reward, max_abs_step_reward
+                )
+                new_rewards.append(clipped_r)
+                new_penalties.append(final_penalties[i])
+                # 刷新水位线
+                running_max = p_t
+            else:
+                # 未突破水位线，过滤掉（逻辑奖励置 0，长度惩罚也置 0 以免引入噪声，水位保持不变）
+                new_rewards.append(torch.tensor(0.0, dtype=torch.float32, device=device) if device else 0.0)
+                new_penalties.append(torch.tensor(0.0, dtype=torch.float32, device=device) if device else 0.0)
+
+        final_rewards = new_rewards
+        final_penalties = new_penalties
+
+    # 2. 原有的局部峰值 (Peak) 过滤逻辑（与Watermark互斥）
+    elif use_peak_selection and len(final_rewards) > 0:
+        new_rewards = []
+        new_penalties = []
+        n = len(final_rewards)
+
+        for i in range(n):
+            val = get_val(i)
+            is_peak = True
+
+            if i > 0 and val <= get_val(i - 1):
+                is_peak = False
+            if i < n - 1 and val <= get_val(i + 1):
+                is_peak = False
+
+            if is_peak:
+                new_rewards.append(final_rewards[i])
+                new_penalties.append(final_penalties[i])
+            else:
+                new_rewards.append(torch.tensor(0.0).to(device) if device else 0.0)
+                new_penalties.append(torch.tensor(0.0).to(device) if device else 0.0)
+
+        final_rewards = new_rewards
+        final_penalties = new_penalties
+
+    return final_rewards, final_penalties

@@ -1167,6 +1167,7 @@ class Normalization:
         self.std_level = config.std_level
         self.std_unbiased = config.std_unbiased
         self.group_size = config.group_size
+        self.denominator = config.denominator
         self.eps = config.eps
 
     @torch.no_grad()
@@ -1227,9 +1228,16 @@ class Normalization:
         if loss_mask is not None:
             x_centered = x_centered * loss_mask
 
-        # Step 2: Compute std
+        # Step 2: Compute denominator (Std or K:correct_nums or N:all_nums)
+        if self.denominator == "k":
+            compute_denominator = self._compute_k
+        elif self.denominator == "n":
+            compute_denominator = self._compute_n
+        else:
+            compute_denominator = self._compute_std
+
         if self.std_level == "batch":
-            std = self._compute_std(
+            denominator = compute_denominator(
                 x,
                 loss_mask,
                 mean,
@@ -1238,9 +1246,9 @@ class Normalization:
                 all_reduce=True,
                 reduce_group=reduce_group,
             )
-            std = std.expand_as(x)
+            denominator = denominator.expand_as(x)
         elif self.std_level == "group":
-            std = torch.zeros_like(x)
+            denominator = torch.zeros_like(x)
             for i in range(0, bs // self.group_size):
                 s = slice(i * self.group_size, (i + 1) * self.group_size)
                 xx = x[s]
@@ -1250,11 +1258,11 @@ class Normalization:
                 # Special case: with group_size=1 and std_unbiased=True, std should be 1 for numerical stability
                 if self.group_size == 1 and self.std_unbiased:
                     dtype = torch.float64 if high_precision else torch.float32
-                    group_std = torch.ones(
+                    group_denominator = torch.ones(
                         (1, *xx.shape[1:]), dtype=dtype, device=xx.device
                     )
                 else:
-                    group_std = self._compute_std(
+                    group_denominator = compute_denominator(
                         xx,
                         m,
                         group_mean_slice,
@@ -1263,13 +1271,23 @@ class Normalization:
                         all_reduce=False,
                         reduce_group=reduce_group,
                     )
-                std[s] = group_std.expand_as(xx)
+                denominator[s] = group_denominator.expand_as(xx)
         else:
-            std = torch.ones_like(x)
+            denominator = torch.ones_like(x)
             eps = 0.0
 
         # Normalize
-        return (x_centered / (std + eps)).float()
+        norm_x = (x_centered / (denominator + eps)).float()
+
+        # Scaling correction for 'k' and 'n' methods to counter-act mean-reduction loss
+        # The user requested to multiply by n (group size or batch size)
+        if self.denominator in ["n", "k"]:
+            if self.std_level == "group":
+                norm_x = norm_x * self.group_size
+            elif self.std_level == "batch":
+                norm_x = norm_x * bs
+
+        return norm_x
 
     @staticmethod
     def _compute_mean(

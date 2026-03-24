@@ -64,6 +64,12 @@ class VLLMBackend:
                 )
             payload["model"] = get_versioned_lora_name(lora_name, version)
 
+        # Add return_prompt_logprobs to payload if set
+        if getattr(gconfig, "prompt_logprobs", None) is not None:
+            payload["prompt_logprobs"] = gconfig.prompt_logprobs
+            payload["logprobs"] = 1
+            payload["echo"] = True
+
         if req.vision_msg_vllm:
             images = iter(req.image_data)
             parsed_input = req.vision_msg_vllm[0]
@@ -106,15 +112,39 @@ class VLLMBackend:
         else:
             raise ValueError("Unexpected vLLM response format.")
 
+        input_logprobs = []
+        if meta_info and isinstance(meta_info, dict):
+            prompt_logprobs = meta_info.get("prompt_logprobs", [])
+            if prompt_logprobs:
+                for p in prompt_logprobs:
+                    if not p:
+                        input_logprobs.append(0.0)
+                    elif isinstance(p, dict):
+                        val = list(p.values())[0]
+                        if isinstance(val, dict) and "logprob" in val:
+                            input_logprobs.append(val["logprob"])
+                        elif hasattr(val, "logprob"):
+                            input_logprobs.append(val.logprob)
+                        else:
+                            input_logprobs.append(float(val))
+                    elif hasattr(p, "logprob"):
+                        input_logprobs.append(p.logprob)
+                    else:
+                        input_logprobs.append(float(p))
+        # -100.0 意味着 e^-100 ≈ 0.0 (接近 0% 的概率)，这才是符合实际物理意义的惩罚/兜底值。
+        input_logprobs = [val if val is not None else -100.0 for val in input_logprobs]
+
         if stop_reason == "abort" and len(output_tokens) == 0:
             return HttpGenerationResult(
                 output_tokens=[],
                 output_logprobs=[],
+                input_logprobs=input_logprobs,
                 stop_reason=stop_reason,
             )
         return HttpGenerationResult(
             output_tokens=output_tokens,
             output_logprobs=output_logprobs,
+            input_logprobs=input_logprobs,
             stop_reason=stop_reason,
         )
 

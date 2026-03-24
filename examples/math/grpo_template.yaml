@@ -1,0 +1,210 @@
+experiment_name: qwen25_0p5b_instruct_bigmath_grpo
+trial_name: debug_max_head_offpolicyness_2_weight_decay_0p1_lr_1p7e-5_mem_fraction_static_0p6_20260107
+
+seed: 1
+enable_offload: false
+total_train_epochs: 5
+tokenizer_path: ${actor.path}
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
+  fileroot: /opt/huawei/dataset/ag_data_wulan/tmp/areal/experiments
+  name_resolve:
+    type: nfs
+    nfs_record_root: /opt/huawei/dataset/ag_data_wulan/tmp/areal/name_resolve
+
+allocation_mode: sglang:d4p1t1+d4p1t1
+
+scheduler:
+  type: null
+
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 256
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 2
+  enable_rollout_tracing: false
+  scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+  dump_to_file: true
+
+gconfig:
+  n_samples: 16
+  min_new_tokens: 0
+  max_new_tokens: 8192
+  greedy: false
+  temperature: 1.0
+  stop_token_ids:
+    - 151643  # "<|endoftext|>"
+    - 151645  # "<|im_end|>"
+
+eval_gconfig:
+  n_samples: 32
+  min_new_tokens: 0
+  max_new_tokens: 8192
+  greedy: false
+  temperature: 0.6
+  top_p: 0.8
+  top_k: 20
+  stop_token_ids:
+    - 151643  # "<|endoftext|>"
+    - 151645  # "<|im_end|>"
+
+actor:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: /opt/huawei/dataset/ag_data_wulan/models/Qwen2.5-0.5b-instruct
+  init_from_scratch: false
+  disable_dropout: true
+  gradient_checkpointing: true
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: 10240
+  optimizer:
+    type: adam
+    lr: 1.0e-5
+    weight_decay: 0.01
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+    lr_scheduler_type: constant
+    gradient_clipping: 1.0
+    warmup_steps_proportion: 0.001
+  eps_clip: 0.2
+  eps_clip_higher: 0.28
+  temperature: ${gconfig.temperature}
+  reward_scaling: 10.0
+  reward_bias: -0.5
+  kl_ctl: 0.0
+  kl_estimator: k1
+  use_sapo_loss: false
+  sapo_tau_pos: 1.0
+  sapo_tau_neg: 1.05
+  ppo_n_minibatches: 1
+  recompute_logprob: true
+  use_decoupled_loss: true
+  behave_imp_weight_cap: 5.0
+  reward_norm:
+    denominator: std
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+  # GRPO: token, GSPO: sequence
+  importance_sampling_level: token
+  weight_update_mode: xccl
+  max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      mem: 32
+      cmd: python3 -m areal.infra.rpc.rpc_server
+      env_vars: {}
+
+ref:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: ${actor.path}
+  init_from_scratch: false
+  disable_dropout: true
+  dtype: ${actor.dtype}
+  mb_spec:
+    max_tokens_per_mb: ${actor.mb_spec.max_tokens_per_mb}
+  optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
+
+# SGLang
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: true
+  dtype: ${actor.dtype}
+  max_running_requests: null
+  context_length: ${actor.mb_spec.max_tokens_per_mb}
+  mem_fraction_static: 0.6
+  max_prefill_tokens: 10240
+#  chunked_prefill_size: 128
+
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_model_len: ${actor.mb_spec.max_tokens_per_mb}
+  gpu_memory_utilization: 0.6
+
+# datasets
+train_dataset:
+  batch_size: 128
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: /opt/huawei/dataset/ag_data_wulan/data/RL/Big-Math-RL-Verified-Processed/solve_rate_qwen2.5_0.5b_instruct/train_dataset_bigmath_mix_sample_solve_rate_Qwen2.5-0.5b-instruct/bigmath_mix_sample_solve_rate_Qwen2.5-0.5b-instruct.jsonl
+  type: rl
+  max_length: 2048
+  drop_last: true
+
+valid_dataset:
+  batch_size: 128
+  pin_memory: true
+  num_workers: 4
+  path: "/opt/huawei/dataset/ag_data_wulan/data/evaluation/MATH-500/test.jsonl,
+  /opt/huawei/dataset/ag_data_wulan/data/evaluation/aime24/aime24.jsonl,
+  /opt/huawei/dataset/ag_data_wulan/data/evaluation/aime25/aime25.jsonl,
+  /opt/huawei/dataset/ag_data_wulan/data/evaluation/math-ai/aime26/aime2026.jsonl,
+  /opt/huawei/dataset/ag_data_wulan/data/evaluation/MathArena/hmmt_feb_2025/data/train-00000-of-00001.parquet"
+  type: rl
+  drop_last: false
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: auto
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  tensorboard:
+    path: ${cluster.fileroot}/tensorboard/${experiment_name}/${trial_name}
+  wandb:
+    mode: disabled
+
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: false
+  session_tracer:
+    enabled: false

@@ -46,15 +46,18 @@ def get() -> WorkflowContext:
     return _current_context.get()
 
 
-def stat_scope() -> str:
+def stat_scope(name: str = None) -> str:
     """Get the appropriate stats_tracker scope based on current context.
 
     Returns
     -------
     str
-        "eval-rollout" if in eval mode, "rollout" otherwise.
+        name if name is not None, else "eval-rollout" if in eval mode, "rollout" otherwise.
     """
-    return "eval-rollout" if get().is_eval else "rollout"
+    if name:
+        return name
+    else:
+        return "eval-rollout" if get().is_eval else "rollout"
 
 
 class HttpClientManager:
