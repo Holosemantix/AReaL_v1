@@ -939,7 +939,8 @@ class MegatronEngine(TrainEngine):
         assert self.optimizer_config.type in [
             "adam",
             "sgd",
-        ], "Only AdamW/sgd optimizer is supported in this engine."
+            "muon",
+        ], "Only AdamW/sgd/muon optimizer is supported in this engine."
         if self.optimizer_config.type == "sgd":
             self.logger.warning(
                 "Using the 'sgd' optimizer with Megatron may be less stable. Consider using the 'adam' (AdamW) optimizer for improved stability."
@@ -977,6 +978,13 @@ class MegatronEngine(TrainEngine):
         mcore_opt_config.exp_avg_sq_dtype = getattr(
             torch, self.mcore_config.exp_avg_sq_dtype
         )
+
+        # === Add Muon specific fields to MCoreOptimizerConfig if enabled ===
+        if self.optimizer_config.type == "muon":
+            mcore_opt_config.muon_matched_adamw_rms = getattr(self.optimizer_config, "muon_matched_adamw_rms", 0.2)
+            mcore_opt_config.muon_momentum = getattr(self.optimizer_config, "muon_momentum", 0.95)
+            mcore_opt_config.muon_nesterov = getattr(self.optimizer_config, "muon_nesterov", True)
+            mcore_opt_config.muon_ns_steps = getattr(self.optimizer_config, "muon_ns_steps", 5)
 
         self.optimizer = get_megatron_optimizer(
             mcore_opt_config,

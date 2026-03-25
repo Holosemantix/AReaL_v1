@@ -115,6 +115,7 @@ from areal.utils.data import (
     split_padded_tensor_dict_into_mb_list,
     unsqueeze_mb_list,
 )
+from areal.optimizer.muon import Muon
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
 from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
 from areal.utils.network import find_free_ports, gethostip
@@ -868,7 +869,8 @@ class FSDPEngine(TrainEngine):
             "adam",
             "adam_bf16",
             "sgd",
-        ], "Only adam/adam_bf16/sgd optimizer is supported in this engine."
+            "muon",
+        ], "Only adam/adam_bf16/sgd/muon optimizer is supported in this engine."
         if self.optimizer_config.type in ["sgd", "adam_bf16"]:
             self.logger.warning(
                 f"Using the '{self.optimizer_config.type}' optimizer with FSDP may be less stable. Consider using the 'adam' (AdamW) optimizer for improved stability and performance."
@@ -897,6 +899,42 @@ class FSDPEngine(TrainEngine):
                 eps=eps,
                 momentum_dtype="bfloat16",
                 variance_dtype="bfloat16",
+            )
+        elif self.optimizer_config.type == "muon":
+            # === Implement Muon specific parameter splitting for FSDP ===
+            muon_params = []
+            adamw_params = []
+            for name, param in self.model.named_parameters():
+                if not param.requires_grad:
+                    continue
+
+                # Check condition logic inherited from Megatron Muon branch
+                is_2d = param.dim() == 2
+                is_bias = name.endswith(".bias")
+                is_embedding = "embed" in name or "output_layer" in name or "lm_head" in name
+
+                if is_2d and not is_bias and not is_embedding:
+                    muon_params.append(param)
+                else:
+                    adamw_params.append(param)
+
+            param_groups = []
+            if muon_params:
+                param_groups.append({'params': muon_params, 'use_muon': True})
+            if adamw_params:
+                param_groups.append({'params': adamw_params, 'use_muon': False})
+
+            # Initialize Muon with parameters from optimizer_config
+            self.optimizer = Muon(
+                param_groups,
+                lr=lr,
+                weight_decay=weight_decay,
+                matched_adamw_rms=getattr(self.optimizer_config, 'muon_matched_adamw_rms', 0.2),
+                momentum=getattr(self.optimizer_config, 'muon_momentum', 0.95),
+                nesterov=getattr(self.optimizer_config, 'muon_nesterov', True),
+                ns_steps=getattr(self.optimizer_config, 'muon_ns_steps', 5),
+                adamw_betas=(beta1, beta2),
+                adamw_eps=eps
             )
         else:
             self.optimizer = torch.optim.SGD(
