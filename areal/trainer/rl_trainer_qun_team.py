@@ -158,7 +158,7 @@ class PPOTrainer:
                 rank=self.actor.data_parallel_rank,
                 world_size=self.actor.data_parallel_world_size,
             )
-        self.valid_dataloader = None
+        self.valid_dataloader = {} if isinstance(self.valid_dataset, dict) else None
         if self.config.valid_dataset is not None and valid_dataset is not None:
             if isinstance(self.valid_dataset, dict):
                 for dataset_name, single_valid_dataset in valid_dataset.items():
