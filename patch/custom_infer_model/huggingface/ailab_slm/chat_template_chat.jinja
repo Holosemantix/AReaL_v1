@@ -1,0 +1,30 @@
+{%- if messages[0]['role'] == 'system' %}
+    {{- '[extra_id_254]system\n' + messages[0]['content'] + '[extra_id_255]\n' }}
+{%- else %}
+    {{- '[extra_id_254]system\nYou are a helpful assistant.[extra_id_255]\n' }}
+{%- endif %}
+{%- for message in messages %}
+    {%- if (message.role == 'user') or (message.role == 'system' and not loop.first) %}
+        {{- '[extra_id_254]' + message.role + '\n' + message.content + '[extra_id_255]' + '\n' }}
+    {%- elif message.role == 'assistant' %}
+        {{- '[extra_id_254]' + message.role }}
+        {%- if message.content %}
+            {{- '\n' + message.content }}
+        {%- endif %}
+        {{- '[extra_id_255]\n' }}
+    {%- elif message.role == 'tool' %}
+        {%- if (loop.index0 == 0) or (messages[loop.index0 - 1].role != 'tool') %}
+            {{- '[extra_id_254]' + message.role }}
+        {%- endif %}
+        {{- '\n' + message.content }}
+        {%- if loop.last or (messages[loop.index0 + 1].role != 'tool') %}
+            {{- '[extra_id_255]\n' }}
+        {%- endif %}
+    {%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}
+    {{- '[extra_id_254]assistant\n' }}
+    {%- if enable_thinking is defined and enable_thinking is false %}
+        {{- '<think>\n\n</think>\n\n' }}
+    {%- endif %}
+{%- endif %}

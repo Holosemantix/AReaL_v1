@@ -1,0 +1,57 @@
+{
+  "add_bos_token": false,
+  "add_eos_token": false,
+  "added_tokens_decoder": {
+    "339": {
+      "content": "[extra_id_254]",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "340": {
+      "content": "[extra_id_255]",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "64427": {
+      "content": "[unused11]",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "64428": {
+      "content": "[unused12]",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    }
+  },
+  "additional_special_tokens": [
+    "[extra_id_254]",
+    "[extra_id_255]",
+    "[unused11]",
+    "[unused12]"
+  ],
+  "model_max_length": 131072,
+  "tokenizer_class": "AILabSLMTokenizer",
+  "auto_map": {
+    "AutoTokenizer": [
+     "tokenization_ailab_slm.AILabSLMTokenizer",
+     "tokenization_ailab_slm_fast.AILabSLMTokenizerFast"
+      ]
+  },
+  "chat_template": "{%- if messages[0]['role'] == 'system' %}\n    {{- '[extra_id_254]system\\n' + messages[0]['content'] + '[extra_id_255]\\n' }}\n{%- else %}\n    {{- '[extra_id_254]system\\nYou are a helpful assistant.[extra_id_255]\\n' }}\n{%- endif %}\n{%- for message in messages %}\n    {%- if (message.role == 'user') or (message.role == 'system' and not loop.first) %}\n        {{- '[extra_id_254]' + message.role + '\\n' + message.content + '[extra_id_255]' + '\\n' }}\n    {%- elif message.role == 'assistant' %}\n        {{- '[extra_id_254]' + message.role }}\n        {%- if message.content %}\n            {{- '\\n' + message.content }}\n        {%- endif %}\n        {{- '[extra_id_255]\\n' }}\n    {%- elif message.role == 'tool' %}\n        {%- if (loop.index0 == 0) or (messages[loop.index0 - 1].role != 'tool') %}\n            {{- '[extra_id_254]' + message.role }}\n        {%- endif %}\n        {{- '\\n' + message.content }}\n        {%- if loop.last or (messages[loop.index0 + 1].role != 'tool') %}\n            {{- '[extra_id_255]\\n' }}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- '[extra_id_254]assistant\\n' }}\n    {%- if enable_thinking is defined and enable_thinking is false %}\n        {{- '<think>\\n\\n</think>\\n\\n' }}\n    {%- endif %}\n{%- endif %}",
+  "clean_up_tokenization_spaces": false,
+  "use_fast": false,
+  "add_prefix_space": false,
+  "from_slow": true
+}
