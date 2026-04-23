@@ -156,15 +156,6 @@ def patch_transformers_modules_path():
     """
     try:
         cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "modules")
-        if not os.path.exists(cache_dir):
-            print("⏭️ HuggingFace modules cache 目录不存在，跳过 PYTHONPATH patch。")
-            return
-
-        # 查找所有 transformers_modules 子目录
-        transformers_modules_root = os.path.join(cache_dir, "transformers_modules")
-        if not os.path.exists(transformers_modules_root):
-            print("⏭️ transformers_modules 目录不存在，跳过 PYTHONPATH patch。")
-            return
 
         # 需要把 modules 目录本身加入 PYTHONPATH，这样子进程才能 import transformers_modules.xxx
         current_pythonpath = os.environ.get("PYTHONPATH", "")
