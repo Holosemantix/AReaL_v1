@@ -3,6 +3,9 @@
 ls
 cd AReaL_v1
 code_path=$(pwd)
+
+yes | cp -rf /opt/huawei/dataset/ag_data/code/AReaL_v1/. ./
+
 # 1. 安装依赖
 # 由于numpy版本冲突，实际需要安装<2.0.0版本
 # 先安装好torch和vllm后，再通过requirements.txt安装剩下的全部依赖，会降级numpy版本
