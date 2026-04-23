@@ -248,6 +248,43 @@ class SGLangBackend:
 
     def launch_server(self, server_args: dict[str, Any]) -> subprocess.Popen:
         """Launch SGLang server subprocess."""
+        # SGLang only needs the config fields, not the dynamically-loaded
+        # AILabSLMConfig class.  Creating a temporary model directory with
+        # auto_map stripped from config.json forces SGLang to use the built-in
+        # LlamaConfig, which avoids PicklingError in multiprocessing.spawn.
+        model_path = server_args.get("model_path")
+        if model_path and os.path.isdir(model_path):
+            import json
+            import shutil
+            import tempfile
+
+            tmp_dir = tempfile.mkdtemp(prefix="sglang_model_")
+            for name in os.listdir(model_path):
+                src = os.path.join(model_path, name)
+                dst = os.path.join(tmp_dir, name)
+                if name == "config.json":
+                    shutil.copy2(src, dst)
+                    with open(dst, "r") as f:
+                        cfg = json.load(f)
+                    cfg.pop("auto_map", None)
+                    with open(dst, "w") as f:
+                        json.dump(cfg, f, indent=2)
+                elif os.path.isdir(src):
+                    os.symlink(src, dst, target_is_directory=True)
+                else:
+                    os.symlink(src, dst)
+
+            server_args = dict(server_args)
+            server_args["model_path"] = tmp_dir
+            # Register cleanup when this Python process exits.
+            import atexit
+
+            def _cleanup(p=tmp_dir):
+                if os.path.exists(p):
+                    shutil.rmtree(p)
+
+            atexit.register(_cleanup)
+
         cmd = SGLangConfig.build_cmd_from_args(server_args)
         _env = os.environ.copy()
         triton_cache_path = _env.get("TRITON_CACHE_PATH", TRITON_CACHE_PATH)
