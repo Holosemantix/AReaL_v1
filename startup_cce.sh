@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
 ls
-cd AReaL_v1
 code_path=$(pwd)
 
 yes | cp -rf /opt/huawei/dataset/ag_data/code/AReaL_v1/. ./
