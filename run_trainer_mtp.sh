@@ -49,6 +49,7 @@ add_override "cluster.name_resolve.nfs_record_root" "${cluster_name_resolve_nfs_
 add_override "gconfig.n_samples" "${gconfig_n_samples}"
 add_override "gconfig.temperature" "${gconfig_temperature}"
 add_override "gconfig.max_new_tokens" "${gconfig_max_new_tokens}"
+add_override "gconfig.enable_thinking" "${gconfig_enable_thinking}"
 
 # Eval Generation Config
 add_override "eval_gconfig.n_samples" "${eval_gconfig_n_samples}"
@@ -66,6 +67,7 @@ add_override "rollout.dump_to_file" "${rollout_dump_to_file}"
 add_override "actor.dtype" "${actor_dtype}"
 add_override "actor.path" "${actor_path}"
 add_override "actor.optimizer.lr" "${actor_optimizer_lr}"
+add_override "actor.optimizer.type" "${actor_optimizer_type}"
 add_override "actor.importance_sampling_level" "${actor_importance_sampling_level}"
 add_override "actor.kl_ctl" "${actor_kl_ctl}"
 add_override "actor.use_sapo_loss" "${actor_use_sapo_loss}"
@@ -112,14 +114,17 @@ add_override "cluster.n_gpus_per_node" "${GPUS_PER_NODE}"
 
 if [ "$NNODES" = "1" ]; then
   # 单节点local启动
+  add_override "scheduler.type" "local"
   # --config 是特殊的，需要保留 --
   # "${CMD_ARGS[@]}" 展开为 Hydra 的 overrides
-  python3 -m areal.launcher.local "${startup_file}" \
+  python3 -m "${startup_file}" \
   --config "${config}" \
   "${CMD_ARGS[@]}"
 
 else
   # 多节点ray启动
+  add_override "scheduler.type" "ray"
+
   if [ "${NODE_RANK}" = "0" ]; then
     # 主节点启动
     if [ "$DEVICE" = "npu" ]; then
@@ -162,7 +167,7 @@ else
         ray status
 
         # 使用数组传参，Hydra 格式
-        python3 -m areal.launcher.ray "${startup_file}" \
+        python3 -m "${startup_file}" \
         --config "${config}" \
         "${CMD_ARGS[@]}"
 
