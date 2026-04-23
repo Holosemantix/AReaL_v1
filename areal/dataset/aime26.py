@@ -32,7 +32,7 @@ def get_aime26_rl_dataset(
     tokenizer,
     max_length: int | None = None,
 ):
-    dataset = load_dataset(path="/".join(path.split('/')[:-1]), data_files=path.split('/')[-1])['train']
+    dataset = load_dataset(path="json", data_files=path)['train']
 
     PROMPT_TEMPLATES = "{problem}\nPlease reason step by step, and put your final answer within \\boxed{}."
 
@@ -40,7 +40,7 @@ def get_aime26_rl_dataset(
         messages = [
             {
                 "role": "user",
-                "content": PROMPT_TEMPLATES.replace('{problem}', sample.pop("question")),
+                "content": PROMPT_TEMPLATES.replace('{problem}', sample.pop("problem")),
             }
         ]
         return {"messages": messages}
