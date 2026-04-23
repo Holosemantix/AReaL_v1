@@ -179,22 +179,21 @@ class FSDPEngine(TrainEngine):
         self.weight_update_master_addr: str
         self.weight_update_master_port: int
 
-        # Isolate the HuggingFace dynamic module cache per-process to avoid
-        # multi-process race conditions when trust_remote_code=True copies .py
-        # files to the shared cache directory.
-        import transformers.dynamic_module_utils as dmu
-        import transformers.utils as hf_utils
-
-        private_modules_cache = f"/tmp/hf_modules_{os.getpid()}"
-        dmu.HF_MODULES_CACHE = private_modules_cache
-        hf_utils.HF_MODULES_CACHE = private_modules_cache
-        dmu.init_hf_modules()
+        # Isolate HuggingFace modules cache per process to prevent race conditions
+        # when multiple FSDP actors concurrently load trust_remote_code models.
+        # Without isolation, multiple processes overwrite the same dynamic module
+        # files in ~/.cache/huggingface/modules/, causing import errors.
+        import transformers.dynamic_module_utils as _dmu
+        import transformers.utils as _hf_utils
+        _private_cache = f"/tmp/hf_modules_{os.getpid()}"
+        _dmu.HF_MODULES_CACHE = _private_cache
+        _hf_utils.HF_MODULES_CACHE = _private_cache
+        _dmu.init_hf_modules()
 
         self.model_config = AutoConfig.from_pretrained(
             pretrained_model_name_or_path=self.config.path,
             trust_remote_code=True,
         )
-        print(f"config_path: {self.config.path}, model_config: {self.model_config.to_dict()}")
         self.is_vision_model = is_valid_vision_model(self.model_config.model_type)
 
         # FSDP-specific initialization
@@ -775,7 +774,6 @@ class FSDPEngine(TrainEngine):
         if self.config.init_from_scratch or self.config.fsdp.memory_efficient_load:
             model = model_class.from_config(
                 self.model_config,
-                trust_remote_code=True,
                 **model_kwargs,
             )
         else:
@@ -783,16 +781,6 @@ class FSDPEngine(TrainEngine):
                 pretrained_model_name_or_path=self.config.path,
                 trust_remote_code=True,
                 **model_kwargs,
-            )
-
-        print(f"self.config.fsdp.memory_efficient_load: {self.config.fsdp.memory_efficient_load}\n"
-              f"self.config.init_from_scratch: {self.config.init_from_scratch}\n")
-        print(
-            "Loaded HF model class %s from module %s using config class %s from module %s",
-            type(model).__name__,
-            type(model).__module__,
-            type(self.model_config).__name__,
-            type(self.model_config).__module__,
             )
         return model
 
