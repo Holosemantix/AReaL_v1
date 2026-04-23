@@ -9,10 +9,10 @@ tokenizer_path: ${actor.path}
 cluster:
   n_nodes: 1
   n_gpus_per_node: 8
-  fileroot: /opt/huawei/dataset/ag_data_wulan/tmp/areal/experiments
+  fileroot: /opt/huawei/dataset/ag_data/logs/areal/experiments
   name_resolve:
     type: nfs
-    nfs_record_root: /opt/huawei/dataset/ag_data_wulan/tmp/areal/name_resolve
+    nfs_record_root: /opt/huawei/dataset/ag_data/logs/areal/name_resolve
 
 allocation_mode: sglang:d4p1t1+d4p1t1
 
@@ -38,6 +38,7 @@ gconfig:
   max_new_tokens: 8192
   greedy: false
   temperature: 1.0
+  enable_thinking: False
   stop_token_ids:
     - 151643  # "<|endoftext|>"
     - 151645  # "<|im_end|>"
@@ -50,6 +51,7 @@ eval_gconfig:
   temperature: 0.6
   top_p: 0.8
   top_k: 20
+  enable_thinking: ${gconfig.enable_thinking}
   stop_token_ids:
     - 151643  # "<|endoftext|>"
     - 151645  # "<|im_end|>"
@@ -57,7 +59,7 @@ eval_gconfig:
 actor:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
-  path: /opt/huawei/dataset/ag_data_wulan/models/Qwen2.5-0.5b-instruct
+  path: /opt/huawei/dataset/ag_data_models/Qwen2.5-0.5b-instruct
   init_from_scratch: false
   disable_dropout: true
   gradient_checkpointing: true
@@ -149,7 +151,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /opt/huawei/dataset/ag_data_wulan/data/RL/Big-Math-RL-Verified-Processed/solve_rate_qwen2.5_0.5b_instruct/train_dataset_bigmath_mix_sample_solve_rate_Qwen2.5-0.5b-instruct/bigmath_mix_sample_solve_rate_Qwen2.5-0.5b-instruct.jsonl
+  path: /opt/huawei/dataset/ag_data_nlp/RL/Big-Math-RL-Verified-Processed/solve_rate_qwen2.5_0.5b_instruct/train_dataset_bigmath_mix_sample_solve_rate_Qwen2.5-0.5b-instruct/bigmath_mix_sample_solve_rate_Qwen2.5-0.5b-instruct.jsonl
   type: rl
   max_length: 2048
   drop_last: true
@@ -158,11 +160,11 @@ valid_dataset:
   batch_size: 128
   pin_memory: true
   num_workers: 4
-  path: "/opt/huawei/dataset/ag_data_wulan/data/evaluation/MATH-500/test.jsonl,
-  /opt/huawei/dataset/ag_data_wulan/data/evaluation/aime24/aime24.jsonl,
-  /opt/huawei/dataset/ag_data_wulan/data/evaluation/aime25/aime25.jsonl,
-  /opt/huawei/dataset/ag_data_wulan/data/evaluation/math-ai/aime26/aime2026.jsonl,
-  /opt/huawei/dataset/ag_data_wulan/data/evaluation/MathArena/hmmt_feb_2025/data/train-00000-of-00001.parquet"
+  path: "/opt/huawei/dataset/ag_data_nlp/evaluation/MATH-500/test.jsonl,
+  /opt/huawei/dataset/ag_data_nlp/evaluation/aime24/aime24.jsonl,
+  /opt/huawei/dataset/ag_data_nlp/evaluation/aime25/aime25.jsonl,
+  /opt/huawei/dataset/ag_data_nlp/evaluation/math-ai/aime26/aime2026.jsonl,
+  /opt/huawei/dataset/ag_data_nlp/evaluation/MathArena/hmmt_feb_2025/data/train-00000-of-00001.parquet"
   type: rl
   drop_last: false
 
