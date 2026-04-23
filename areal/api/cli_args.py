@@ -209,6 +209,12 @@ class GenerationHyperparameters:
             "help": "Enable beam search in the vLLM engine. When enabled, sampling parameters like temperature, top-p, and top-k are auto ignored."
         },
     )
+    enable_thinking: bool | None = field(
+        default=None,
+        metadata={
+            "help": "Enable thinking or not."
+        },
+    )
     # [新增] 发给底层引擎的请求参数：获取输入 prompt 的对数概率
     prompt_logprobs: int | None = field(
         default=None,
@@ -326,7 +332,7 @@ class OptimizerConfig:
             "help": "Optimizer type. For FSDP Engine, adam_bf16 enables memory-efficient BF16 optimizer states. "
             "For Megatron Engine, adam_bf16 requires dtype=bfloat16 and is automatically converted to adam "
             "with precision-aware optimizer enabled.",
-            "choices": ["adam", "sgd", "adam_bf16"],
+            "choices": ["adam", "sgd", "adam_bf16", "muon"],
         },
     )
     lr: float = field(default=1e-3, metadata={"help": "Learning rate"})
@@ -386,6 +392,19 @@ class OptimizerConfig:
     gradient_clipping: float = field(
         default=1.0, metadata={"help": "Gradient clipping threshold"}
     )
+    muon_matched_adamw_rms: float = field(
+        default=0.2, metadata={"help": "muon_matched_adamw_rms"}
+    )
+    muon_momentum: float = field(
+        default=0.95, metadata={"help": "muon_momentum"}
+    )
+    muon_nesterov: bool = field(
+        default=True, metadata={"help": "muon_nesterov"}
+    )
+    muon_ns_steps: int = field(
+        default=5, metadata={"help": "Gradient clipping threshold"}
+    )
+
 
 
 @dataclass
