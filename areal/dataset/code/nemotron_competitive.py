@@ -1,13 +1,18 @@
 """Loader for ``nvidia/Nemotron-RL-coding-competitive_coding``.
 
-Source schema (per row):
-    input:              list[{"role": "user", "content": str}]  — problem prompt
-    verifier_metadata:  {"unit_tests": {"inputs": list[str], "outputs": list[str]}}
-    ... (hash_id, dataset, source, responses_create_params, ...)
+Verified source schema (parquet, per row):
+    responses_create_params.input:  list[{"role": "user", "content": str}]
+    verifier_metadata.unit_tests:   {"inputs": list[str], "outputs": list[str]}
+    hash_id:                        str
+    dataset:                        str  (e.g. "open-r1/codeforces")
+    source:                         str  (e.g. "codeforces")
+
+Note: the top-level field is ``responses_create_params.input``, NOT ``input``.
+The ``input`` alias only appears in the pre-processed training blends.
 
 Supports three ways to specify ``path``:
     * HuggingFace Hub name, e.g. ``nvidia/Nemotron-RL-coding-competitive_coding``
-    * Local directory with the HF dataset layout
+    * Local directory with the HF dataset layout (contains ``data/train-*.parquet``)
     * Local ``.jsonl`` / ``.parquet`` single-file snapshot
 """
 
@@ -42,7 +47,8 @@ def get_nemotron_competitive_rl_dataset(
     dataset = _load_raw(path, split)
 
     def process(sample):
-        messages = sample["input"]
+        rcp = sample.get("responses_create_params") or {}
+        messages = rcp.get("input") or []
         verifier = sample.get("verifier_metadata") or {}
         unit_tests = verifier.get("unit_tests") or {}
         return {
