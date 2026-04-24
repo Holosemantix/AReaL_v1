@@ -56,6 +56,7 @@ class RLVRWorkflow(RolloutWorkflow):
         | str = default_get_input_ids_fn,
         data_extract_prompt_fn: Callable[[dict[str, Any]], Any]
         | str = default_data_extract_prompt_fn,
+        reward_timeout_seconds: float = 15.0,
     ):
         self.reward_fn = reward_fn
         self.tokenizer = tokenizer
@@ -68,8 +69,11 @@ class RLVRWorkflow(RolloutWorkflow):
         self.rollout_stat_scope = rollout_stat_scope
         self.enable_thinking = enable_thinking
         self.ig_reward_params = ig_reward_params
+        self.reward_timeout_seconds = reward_timeout_seconds
         if not isinstance(reward_fn, str):
-            self.async_reward_fn = AsyncRewardWrapper(reward_fn)
+            self.async_reward_fn = AsyncRewardWrapper(
+                reward_fn, timeout_seconds=reward_timeout_seconds
+            )
         # Support string paths for get_input_ids_fn
         if isinstance(get_input_ids_fn, str):
             get_input_ids_fn = import_from_string(get_input_ids_fn)
@@ -311,7 +315,9 @@ class RLVRWorkflow(RolloutWorkflow):
         # NOTE: load reward function dynamically if given as string
         if isinstance(self.reward_fn, str):
             self.reward_fn = import_from_string(self.reward_fn)
-            self.async_reward_fn = AsyncRewardWrapper(self.reward_fn)
+            self.async_reward_fn = AsyncRewardWrapper(
+                self.reward_fn, timeout_seconds=self.reward_timeout_seconds
+            )
 
         input_ids = self.get_input_ids_fn(
             self.data_extract_prompt_fn(data),

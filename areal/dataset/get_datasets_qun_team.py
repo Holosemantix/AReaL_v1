@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from transformers.processing_utils import ProcessorMixin
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
-VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k", "hh-rlhf", "torl_data", "bigmath", "ringlite", "math500", "aime24", "aime25", "hmmt25"]
+VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k", "hh-rlhf", "torl_data", "bigmath", "ringlite", "math500", "aime24", "aime25", "hmmt25", "nemotron_code"]
 
 logger = logging.getLogger("Dataset")
 
@@ -171,6 +171,16 @@ def _get_custom_dataset(
             from .hmmt25 import get_hmmt25_rl_dataset
 
             dataset_map['hmmt25'] = get_hmmt25_rl_dataset(
+                path=path,
+                split=split,
+                tokenizer=tokenizer,
+                max_length=max_length,
+                **kwargs,
+            )
+        elif ("nemotron" in path.lower() and "cod" in path.lower()) and type == "rl":
+            from .code.nemotron_competitive import get_nemotron_competitive_rl_dataset
+
+            dataset_map['nemotron_code'] = get_nemotron_competitive_rl_dataset(
                 path=path,
                 split=split,
                 tokenizer=tokenizer,

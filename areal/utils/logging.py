@@ -77,6 +77,8 @@ LOGGER_COLORS_EXACT = {
     "Geometry3KReward": "purple",
     "RewardUtils": "purple",
     "RewardAPI": "purple",
+    "CompetitiveCodeReward": "purple",
+    "CodeSandbox": "purple",
     # Tree attention - cyan
     "TreeAttentionWrapper": "light_cyan",
     "TreeAttentionFSDP": "light_cyan",

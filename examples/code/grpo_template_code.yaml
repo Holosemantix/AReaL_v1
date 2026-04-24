@@ -1,0 +1,220 @@
+experiment_name: qwen3_0p6b_nemotron_code_grpo
+trial_name: debug_20260423
+
+seed: 1
+enable_offload: false
+total_train_epochs: 5
+tokenizer_path: ${actor.path}
+
+cluster:
+  n_nodes: 1
+  n_gpus_per_node: 8
+  fileroot: /opt/huawei/dataset/ag_data/logs/areal/experiments
+  name_resolve:
+    type: nfs
+    nfs_record_root: /opt/huawei/dataset/ag_data/logs/areal/name_resolve
+
+allocation_mode: sglang:d4p1t1+d4p1t1
+
+scheduler:
+  type: null
+
+rollout:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  max_concurrent_rollouts: 128
+  queue_size: null
+  consumer_batch_size: ${train_dataset.batch_size}
+  max_head_offpolicyness: 2
+  enable_rollout_tracing: false
+  scheduling_spec: ${actor.scheduling_spec}
+  fileroot: ${cluster.fileroot}
+  tokenizer_path: ${tokenizer_path}
+  dump_to_file: true
+
+gconfig:
+  n_samples: 16
+  min_new_tokens: 0
+  max_new_tokens: 16384
+  greedy: false
+  temperature: 1.0
+  enable_thinking: False
+  stop_token_ids:
+    - 151643  # "<|endoftext|>"
+    - 151645  # "<|im_end|>"
+
+eval_gconfig:
+  n_samples: 8
+  min_new_tokens: 0
+  max_new_tokens: 16384
+  greedy: false
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  enable_thinking: ${gconfig.enable_thinking}
+  stop_token_ids:
+    - 151643  # "<|endoftext|>"
+    - 151645  # "<|im_end|>"
+
+actor:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: /opt/huawei/dataset/ag_data_models/Qwen3-0.6B
+  init_from_scratch: false
+  disable_dropout: true
+  gradient_checkpointing: true
+  dtype: bfloat16
+  mb_spec:
+    max_tokens_per_mb: 20480
+  optimizer:
+    type: adam
+    lr: 1.0e-6
+    weight_decay: 0.01
+    beta1: 0.9
+    beta2: 0.999
+    eps: 1e-8
+    lr_scheduler_type: constant
+    gradient_clipping: 1.0
+    warmup_steps_proportion: 0.01
+  eps_clip: 0.2
+  eps_clip_higher: 0.28
+  temperature: ${gconfig.temperature}
+  reward_scaling: 1.0
+  reward_bias: 0.0
+  kl_ctl: 0.0
+  kl_estimator: k1
+  use_sapo_loss: false
+  sapo_tau_pos: 1.0
+  sapo_tau_neg: 1.05
+  ppo_n_minibatches: 1
+  recompute_logprob: true
+  use_decoupled_loss: true
+  behave_imp_weight_cap: 5.0
+  reward_norm:
+    denominator: std
+    mean_level: group
+    std_level: group
+    group_size: ${gconfig.n_samples}
+  adv_norm:
+    mean_level: batch
+    std_level: batch
+  # GRPO: token, GSPO: sequence
+  importance_sampling_level: token
+  weight_update_mode: xccl
+  max_new_tokens: ${gconfig.max_new_tokens}
+  scheduling_spec:
+    - task_type: worker
+      port_count: 2
+      gpu: 1
+      mem: 32
+      cmd: python3 -m areal.infra.rpc.rpc_server
+      env_vars: {}
+
+ref:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  path: ${actor.path}
+  init_from_scratch: false
+  disable_dropout: true
+  dtype: ${actor.dtype}
+  mb_spec:
+    max_tokens_per_mb: ${actor.mb_spec.max_tokens_per_mb}
+  optimizer: null
+  scheduling_strategy:
+    type: colocation
+    target: actor
+  scheduling_spec: ${actor.scheduling_spec}
+
+# SGLang
+sglang:
+  model_path: ${actor.path}
+  random_seed: ${seed}
+  skip_tokenizer_init: true
+  dtype: ${actor.dtype}
+  max_running_requests: null
+  context_length: ${actor.mb_spec.max_tokens_per_mb}
+  mem_fraction_static: 0.6
+  max_prefill_tokens: 10240
+
+vllm:
+  model: ${actor.path}
+  seed: ${seed}
+  skip_tokenizer_init: false
+  dtype: ${actor.dtype}
+  max_model_len: ${actor.mb_spec.max_tokens_per_mb}
+  gpu_memory_utilization: 0.6
+
+# Reward — competitive coding execution budget (per-test / per-sample)
+# per_test_timeout  : wall-clock seconds for a single stdin/stdout test
+# max_tests         : upper bound on tests run per reward call (subsample)
+# memory_mb         : address-space cap for each test subprocess
+# reward_timeout_seconds: total AsyncRewardWrapper timeout per sample
+code_reward:
+  per_test_timeout: 5.0
+  max_tests: 15
+  memory_mb: 2048
+  reward_timeout_seconds: 90.0
+
+# datasets
+# `path` accepts: HF hub name (e.g., `nvidia/Nemotron-RL-coding-competitive_coding`),
+#                 local HF dataset dir, or local .jsonl / .parquet file.
+train_dataset:
+  batch_size: 128
+  shuffle: true
+  pin_memory: true
+  num_workers: 4
+  path: /opt/huawei/dataset/ag_data_nlp/RL/Nemotron-RL-coding-competitive_coding
+  type: rl
+  max_length: 4096
+  drop_last: true
+
+valid_dataset:
+  batch_size: 128
+  pin_memory: true
+  num_workers: 4
+  path: ""
+  type: rl
+  drop_last: false
+
+# Utilities
+saver:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+recover:
+  mode: auto
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: null
+  freq_steps: null
+  freq_secs: null
+
+evaluator:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  freq_epochs: 1
+  freq_steps: null
+  freq_secs: null
+
+stats_logger:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  tensorboard:
+    path: ${cluster.fileroot}/tensorboard/${experiment_name}/${trial_name}
+  wandb:
+    mode: disabled
+
+perf_tracer:
+  experiment_name: ${experiment_name}
+  trial_name: ${trial_name}
+  fileroot: ${cluster.fileroot}
+  enabled: false
+  session_tracer:
+    enabled: false
