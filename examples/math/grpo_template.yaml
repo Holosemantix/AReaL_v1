@@ -202,6 +202,13 @@ stats_logger:
     path: ${cluster.fileroot}/tensorboard/${experiment_name}/${trial_name}
   wandb:
     mode: disabled
+  swanlab:
+    project: null
+    name: null
+    config: null
+    logdir: null
+    mode: disabled
+    api_key: null
 
 perf_tracer:
   experiment_name: ${experiment_name}

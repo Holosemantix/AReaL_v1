@@ -104,6 +104,13 @@ add_override "recover.mode" "${recover_mode}"
 add_override "evaluator.freq_epochs" "${evaluator_freq_epochs}"
 add_override "evaluator.freq_steps" "${evaluator_freq_steps}"
 
+add_override "stats_logger.swanlab.mode" "${swanlab_mode}"
+add_override "stats_logger.swanlab.project" "${swanlab_project}"
+add_override "stats_logger.swanlab.name" "${swanlab_name}"
+add_override "stats_logger.swanlab.config" "${swanlab_config}"
+add_override "stats_logger.swanlab.logdir" "${swanlab_logdir}"
+add_override "stats_logger.swanlab.api_key" "${swanlab_api_key}"
+
 # Cluster Info (即使有值也只在传入时覆盖，否则用 config 默认)
 add_override "cluster.n_nodes" "${NNODES}"
 add_override "cluster.n_gpus_per_node" "${GPUS_PER_NODE}"
