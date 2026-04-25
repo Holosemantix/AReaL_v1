@@ -4,62 +4,22 @@ Pipeline:
   dataset   areal.dataset.code.nemotron_competitive
   reward    areal.reward.code.competitive_exec (subprocess sandbox, pass rate)
   workflow  areal.workflow.rlvr_qun_team.RLVRWorkflow (with extended reward timeout)
+
+Note:
+  ``reward_fn`` and ``workflow`` are passed as import-path strings so they
+  survive JSON-RPC serialization to remote workers.  The default kwargs of
+  ``areal.reward.code.nemotron_competitive_reward_fn`` match the
+  ``code_reward`` fields in the YAML template.
 """
 
 import sys
-from dataclasses import dataclass, field
-from functools import partial
 
-from areal.api.cli_args import (
-    GRPOConfig,
-    GenerationHyperparameters,
-    PPOActorConfig,
-    load_expr_config,
-)
+from examples.code.nemotron_configs import CodeGRPOConfig
+
+from areal.api.cli_args import load_expr_config
 from areal.dataset.get_datasets_qun_team import get_multi_custom_dataset
-from areal.reward.code import nemotron_competitive_reward_fn
 from areal.trainer.rl_trainer_qun_team import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
-from areal.workflow.rlvr_qun_team import RLVRWorkflow
-
-
-@dataclass
-class InfoGainRewardConfig:
-    """Matches the shape expected by rl_trainer_qun_team / actor_qun_team."""
-    mini_batch_size: int = field(default=128)
-    max_tokens_per_forward: int = field(default=131072)
-    compute_backend: str = field(default="rollout")
-    bridge_text: str = field(default="")
-    sep_token: str = field(default="\n")
-    reward_mode: str = field(default="prob")
-    beta: float = field(default=0.5)
-    lambda_val: float = field(default=0.2)
-    enable_varlen_packing: bool = field(default=True)
-    use_watermark_selection: bool = field(default=False)
-    use_peak_selection: bool = field(default=False)
-
-
-@dataclass
-class InfoGainPPOActorConfig(PPOActorConfig):
-    ig_reward_params: InfoGainRewardConfig | None = field(default=None)
-
-
-@dataclass
-class CodeRewardConfig:
-    """Budget for the competitive-coding execution reward.
-
-    All values are tuned for H800 + 0.6B–14B Qwen3 rollouts.
-    """
-    per_test_timeout: float = field(default=5.0)
-    max_tests: int = field(default=15)
-    memory_mb: int = field(default=2048)
-    reward_timeout_seconds: float = field(default=90.0)
-
-
-@dataclass
-class CodeGRPOConfig(GRPOConfig):
-    actor: InfoGainPPOActorConfig = field(default_factory=InfoGainPPOActorConfig)
-    code_reward: CodeRewardConfig = field(default_factory=CodeRewardConfig)
 
 
 def main(args):
@@ -88,22 +48,13 @@ def main(args):
             tokenizer=tokenizer,
         )
 
-    # Bind execution budget into the reward fn so training code doesn't need
-    # to know the knobs.
-    reward_fn = partial(
-        nemotron_competitive_reward_fn,
-        per_test_timeout=config.code_reward.per_test_timeout,
-        max_tests=config.code_reward.max_tests,
-        memory_mb=config.code_reward.memory_mb,
-    )
-
     with PPOTrainer(
         config,
         train_dataset=train_dataset,
         valid_dataset=valid_dataset_map,
     ) as trainer:
         workflow_kwargs = dict(
-            reward_fn=reward_fn,
+            reward_fn="areal.reward.code.nemotron_competitive_reward_fn",
             gconfig=config.gconfig,
             tokenizer=config.tokenizer_path,
             enable_thinking=config.gconfig.enable_thinking,
@@ -119,9 +70,9 @@ def main(args):
 
         workflow_kwargs["ig_reward_params"] = config.actor.ig_reward_params
         trainer.train(
-            workflow=RLVRWorkflow,
+            workflow="areal.workflow.rlvr_qun_team.RLVRWorkflow",
             workflow_kwargs=workflow_kwargs,
-            eval_workflow=RLVRWorkflow,
+            eval_workflow="areal.workflow.rlvr_qun_team.RLVRWorkflow",
             eval_workflow_kwargs=eval_workflow_kwargs_map,
         )
 
