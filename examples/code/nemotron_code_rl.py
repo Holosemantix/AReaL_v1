@@ -26,6 +26,12 @@ def main(args):
     config, _ = load_expr_config(args, CodeGRPOConfig)
     tokenizer = load_hf_tokenizer(config.tokenizer_path)
 
+    # Probe sandbox toolchain early so missing g++/java/node show up in the
+    # trainer log before any rollouts happen.
+    from areal.reward.code import assert_toolchain_or_warn
+
+    assert_toolchain_or_warn(list(config.code_reward.probe_languages))
+
     if config.actor.ig_reward_params is not None:
         config.actor.ig_reward_params.sep_token_id = tokenizer.encode(
             config.actor.ig_reward_params.sep_token, add_special_tokens=False

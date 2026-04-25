@@ -145,15 +145,28 @@ vllm:
   gpu_memory_utilization: 0.6
 
 # Reward — competitive coding execution budget (per-test / per-sample)
-# per_test_timeout  : wall-clock seconds for a single stdin/stdout test
-# max_tests         : upper bound on tests run per reward call (subsample)
-# memory_mb         : address-space cap for each test subprocess
+# per_test_timeout      : wall-clock seconds for a single stdin/stdout test
+# max_tests             : upper bound on tests run per reward call (subsample)
+# memory_mb             : address-space cap for each test subprocess (Python/C++/Node)
 # reward_timeout_seconds: total AsyncRewardWrapper timeout per sample
+# language              : default source language; per-sample 'language' from the
+#                         dataset loader overrides. Supported: python, cpp, java, javascript
+# compile_timeout       : wall-clock seconds for the compile step (compiled langs only)
+# java_xmx_mb           : JVM heap cap (-Xmx) for Java submissions (RLIMIT_AS is skipped for Java)
+# probe_languages       : languages probed at trainer startup; a missing toolchain logs a warning
 code_reward:
   per_test_timeout: 5.0
   max_tests: 15
   memory_mb: 2048
   reward_timeout_seconds: 90.0
+  language: python
+  compile_timeout: 30.0
+  java_xmx_mb: 2048
+  probe_languages:
+    - python
+    - cpp
+    - java
+    - javascript
 
 # datasets
 # `path` accepts: HF hub name (e.g., `nvidia/Nemotron-RL-coding-competitive_coding`),

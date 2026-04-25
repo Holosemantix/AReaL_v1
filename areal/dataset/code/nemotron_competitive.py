@@ -41,7 +41,7 @@ def _load_raw(path: str, split: str):
 def get_nemotron_competitive_rl_dataset(
     path: str,
     split: str,
-    tokenizer: "PreTrainedTokenizerFast",
+    tokenizer: PreTrainedTokenizerFast,
     max_length: int | None = None,
 ):
     dataset = _load_raw(path, split)
@@ -55,6 +55,9 @@ def get_nemotron_competitive_rl_dataset(
             "messages": messages,
             "test_inputs": list(unit_tests.get("inputs") or []),
             "test_outputs": list(unit_tests.get("outputs") or []),
+            # Nemotron-RL-coding-competitive_coding is python-only per its README.
+            # Future multi-language loaders can vary this per sample.
+            "language": "python",
         }
 
     dataset = dataset.map(process, remove_columns=dataset.column_names)
