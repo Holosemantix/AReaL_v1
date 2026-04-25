@@ -203,8 +203,8 @@ stats_logger:
   wandb:
     mode: disabled
   swanlab:
-    project: null
-    name: null
+    project: ${experiment_name}
+    name: ${experiment_name}
     config: null
     logdir: null
     mode: disabled
