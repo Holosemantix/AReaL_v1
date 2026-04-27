@@ -225,7 +225,7 @@ stats_logger:
     mode: disabled
   swanlab:
     project: ${experiment_name}
-    name: ${experiment_name}
+    name: ${trial_name}
     config: null
     logdir: null
     mode: disabled
