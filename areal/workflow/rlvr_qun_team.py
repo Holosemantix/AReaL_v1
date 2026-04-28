@@ -89,7 +89,7 @@ class RLVRWorkflow(RolloutWorkflow):
         resp: ModelResponse,
         prompt_str: str,
         task_data: dict[str, Any],
-    ) -> float:
+    ) -> tuple[float, dict[str, float]]:
         """Decode completion and compute reward.
 
         Traces reward phase execution for SessionTracer. Decodes output tokens
@@ -97,11 +97,11 @@ class RLVRWorkflow(RolloutWorkflow):
 
         Returns
         -------
-        float
-            Reward value.
+        tuple[float, dict[str, float]]
+            Reward value and optional diagnostic scalars.
         """
         completions_str = self.tokenizer.decode(resp.output_tokens)
-        reward = await self.async_reward_fn(
+        reward_result = await self.async_reward_fn(
             prompt_str,
             completions_str,
             resp.input_tokens,
@@ -109,7 +109,16 @@ class RLVRWorkflow(RolloutWorkflow):
             **task_data,
         )
 
-        return reward
+        if isinstance(reward_result, dict):
+            reward = float(reward_result["reward"])
+            diagnostics = {
+                f"reward_diagnostics/{key}": float(value)
+                for key, value in reward_result.items()
+                if key != "reward" and isinstance(value, int | float)
+            }
+            return reward, diagnostics
+
+        return float(reward_result), {}
 
     @session_context()
     async def _collect_samples(
@@ -133,9 +142,15 @@ class RLVRWorkflow(RolloutWorkflow):
         async with atrace_session_phase("generate"):
             resp = await engine.agenerate(req)
 
-        reward = await self._compute_rewards(resp, prompt_str, task_data)
+        reward, reward_diagnostics = await self._compute_rewards(
+            resp, prompt_str, task_data
+        )
 
-        stats_tracker.get(workflow_context.stat_scope(self.rollout_stat_scope)).scalar(reward=reward)
+        scalars = {"reward": reward}
+        scalars.update(reward_diagnostics)
+        stats_tracker.get(workflow_context.stat_scope(self.rollout_stat_scope)).scalar(
+            **scalars
+        )
 
         return resp, reward
 

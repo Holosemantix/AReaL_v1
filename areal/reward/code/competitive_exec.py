@@ -2,7 +2,7 @@
 
 Extracts the last fenced code block from the model completion (Python by
 default, configurable per sample), compiles once, runs against stdin/stdout
-unit tests, returns pass rate ∈ [0, 1].
+unit tests, returns pass rate ∈ [0, 1] plus execution outcome counters.
 
 Test subsampling is deterministic per ``prompt`` so all rollouts of the same
 question in a GRPO group see the same tests — otherwise the group-level
@@ -83,7 +83,7 @@ def nemotron_competitive_reward_fn(
     compile_timeout: float = 30.0,
     java_xmx_mb: int = 2048,
     **kwargs,
-) -> float:
+) -> dict[str, float]:
     """Pass rate over (a sample of) unit tests.
 
     :param language: Source language for the model output. May be overridden
@@ -98,17 +98,37 @@ def nemotron_competitive_reward_fn(
         languages only). Compile happens once per submission.
     :param java_xmx_mb: JVM heap cap for Java submissions (``-Xmx``).
     """
+    diagnostics = {
+        "reward": 0.0,
+        "no_tests": 0.0,
+        "mismatched_tests": 0.0,
+        "no_code": 0.0,
+        "compile_error": 0.0,
+        "timeout_tests": 0.0,
+        "runtime_error_tests": 0.0,
+        "wrong_answer_tests": 0.0,
+        "passed_tests": 0.0,
+        "sampled_tests": 0.0,
+    }
+
+    def _finish(reward: float) -> dict[str, float]:
+        diagnostics["reward"] = reward
+        return diagnostics
+
     if not test_inputs or not test_outputs:
-        return 0.0
+        diagnostics["no_tests"] = 1.0
+        return _finish(0.0)
     if len(test_inputs) != len(test_outputs):
         logger.warning(
             f"Mismatched test inputs/outputs: {len(test_inputs)} vs {len(test_outputs)}"
         )
-        return 0.0
+        diagnostics["mismatched_tests"] = 1.0
+        return _finish(0.0)
 
     extracted = extract_code(completions, expected_language=language)
     if extracted is None:
-        return 0.0
+        diagnostics["no_code"] = 1.0
+        return _finish(0.0)
     detected_lang, code = extracted
 
     artifact = compile_code(detected_lang, code, compile_timeout=compile_timeout)
@@ -116,7 +136,8 @@ def nemotron_competitive_reward_fn(
         # Compile failure or unsupported language — caller already logged in
         # CompileResult.error/stderr; treat as zero reward.
         cleanup_compile_result(artifact)
-        return 0.0
+        diagnostics["compile_error"] = 1.0
+        return _finish(0.0)
 
     try:
         n = len(test_inputs)
@@ -127,6 +148,7 @@ def nemotron_competitive_reward_fn(
             # across all rollouts of the same problem in a GRPO group.
             rng = random.Random(prompt)
             idx = rng.sample(range(n), max_tests)
+        diagnostics["sampled_tests"] = float(len(idx))
 
         passed = 0
         for i in idx:
@@ -137,11 +159,18 @@ def nemotron_competitive_reward_fn(
                 memory_mb=memory_mb,
                 java_xmx_mb=java_xmx_mb,
             )
-            if result.timeout or result.error is not None or result.returncode != 0:
+            if result.timeout:
+                diagnostics["timeout_tests"] += 1.0
+                continue
+            if result.error is not None or result.returncode != 0:
+                diagnostics["runtime_error_tests"] += 1.0
                 continue
             if outputs_match(result.stdout, test_outputs[i]):
                 passed += 1
+            else:
+                diagnostics["wrong_answer_tests"] += 1.0
 
-        return passed / len(idx)
+        diagnostics["passed_tests"] = float(passed)
+        return _finish(passed / len(idx))
     finally:
         cleanup_compile_result(artifact)

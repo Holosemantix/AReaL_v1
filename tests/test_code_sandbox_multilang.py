@@ -174,7 +174,7 @@ def test_reward_fn_python_pass_rate():
     if not TOOLCHAIN.get("python"):
         pytest.skip("python toolchain not available")
     completion = "Here's the answer:\n```python\nx = int(input())\nprint(x * 2)\n```\n"
-    reward = nemotron_competitive_reward_fn(
+    result = nemotron_competitive_reward_fn(
         prompt="dummy",
         completions=completion,
         prompt_ids=[],
@@ -186,7 +186,30 @@ def test_reward_fn_python_pass_rate():
         max_tests=15,
         memory_mb=512,
     )
-    assert reward == 1.0
+    assert result["reward"] == 1.0
+
+
+def test_reward_fn_reports_test_outcomes():
+    if not TOOLCHAIN.get("python"):
+        pytest.skip("python toolchain not available")
+    completion = "```python\nx = int(input())\nprint(x * 2)\n```"
+    result = nemotron_competitive_reward_fn(
+        prompt="dummy",
+        completions=completion,
+        prompt_ids=[],
+        completion_ids=[],
+        test_inputs=["1\n", "10\n"],
+        test_outputs=["2", "21"],
+        language="python",
+        per_test_timeout=5.0,
+        max_tests=15,
+        memory_mb=512,
+    )
+    assert result["reward"] == 0.5
+    assert result["sampled_tests"] == 2.0
+    assert result["passed_tests"] == 1.0
+    assert result["wrong_answer_tests"] == 1.0
+    assert result["no_code"] == 0.0
 
 
 def test_reward_fn_cpp_pass_rate():
@@ -197,7 +220,7 @@ def test_reward_fn_cpp_pass_rate():
         "#include <iostream>\nint main(){int x; std::cin >> x; std::cout << x * 2 << '\\n';}\n"
         "```\n"
     )
-    reward = nemotron_competitive_reward_fn(
+    result = nemotron_competitive_reward_fn(
         prompt="dummy",
         completions=completion,
         prompt_ids=[],
@@ -210,11 +233,11 @@ def test_reward_fn_cpp_pass_rate():
         memory_mb=1024,
         compile_timeout=30.0,
     )
-    assert reward == 1.0
+    assert result["reward"] == 1.0
 
 
 def test_reward_fn_no_fence_returns_zero():
-    reward = nemotron_competitive_reward_fn(
+    result = nemotron_competitive_reward_fn(
         prompt="dummy",
         completions="I would solve this by ...",  # no code block
         prompt_ids=[],
@@ -223,14 +246,14 @@ def test_reward_fn_no_fence_returns_zero():
         test_outputs=["2"],
         language="python",
     )
-    assert reward == 0.0
+    assert result["reward"] == 0.0
 
 
 def test_reward_fn_compile_failure_returns_zero():
     if not TOOLCHAIN.get("cpp"):
         pytest.skip("cpp toolchain not available")
     completion = "```cpp\nint main(){ return 0 }\n```"
-    reward = nemotron_competitive_reward_fn(
+    result = nemotron_competitive_reward_fn(
         prompt="dummy",
         completions=completion,
         prompt_ids=[],
@@ -240,4 +263,4 @@ def test_reward_fn_compile_failure_returns_zero():
         language="cpp",
         compile_timeout=10.0,
     )
-    assert reward == 0.0
+    assert result["reward"] == 0.0
