@@ -890,6 +890,14 @@ class WorkflowExecutor:
                 prompt_end = seqlen - sum(mask)
                 prompt_ids = ids[:prompt_end]
                 completion_ids = ids[prompt_end:]
+                stop_token_ids = {
+                    token_id
+                    for token_id in (tokenizer.eos_token_id, tokenizer.pad_token_id)
+                    if token_id is not None
+                }
+                ended_with_stop_token = (
+                    len(completion_ids) > 0 and completion_ids[-1] in stop_token_ids
+                )
 
                 # Decode to text
                 prompt_text = tokenizer.decode(prompt_ids, skip_special_tokens=False)
@@ -907,6 +915,8 @@ class WorkflowExecutor:
                     "head_version": head_version,
                     "tail_version": tail_version,
                     "reward": reward,
+                    "completion_len": len(completion_ids),
+                    "ended_with_stop_token": ended_with_stop_token,
                     "prompt": prompt_text,
                     "completion": completion_text,
                 }

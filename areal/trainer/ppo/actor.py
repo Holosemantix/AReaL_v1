@@ -181,7 +181,8 @@ class PPOActor:
         # Compute KL-regularized rewards.
         attn_mask = data["attention_mask"]
         seqlens = attn_mask.sum(-1).long()
-        seq_no_eos_mask = seqlens == attn_mask.shape[1]
+        response_lengths = data["loss_mask"].sum(dim=-1).long()
+        seq_no_eos_mask = response_lengths >= self.config.max_new_tokens
         rewards = -self.kl_ctl * self.kl_estimator(old_logp, ref_logp)
         kl_rewards = rewards.clone()
         # KL rewards at the next token after eos is zero.
@@ -277,10 +278,12 @@ class PPOActor:
         stats_tracker.stat(**stats, denominator="n_valid_tokens")
 
         prompt_lens = data["attention_mask"].sum(-1) - data["loss_mask"].sum(-1)
+        response_lens = data["loss_mask"].sum(-1)
         seq_stats = dict(
-            no_eos_ratios=(seqlens == attn_mask.shape[-1]).float(),
+            no_eos_ratios=(response_lens >= self.config.max_new_tokens).float(),
             task_reward=reward_score.float(),
             prompt_len=prompt_lens.float(),
+            response_len=response_lens.float(),
             seq_len=seqlens.float(),
         )
         stats_tracker.stat(**seq_stats, denominator="n_seqs")

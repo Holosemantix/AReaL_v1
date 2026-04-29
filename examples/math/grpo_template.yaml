@@ -2,6 +2,7 @@ experiment_name: qwen25_0p5b_instruct_bigmath_grpo
 trial_name: debug_max_head_offpolicyness_2_weight_decay_0p1_lr_1p7e-5_mem_fraction_static_0p6_20260107
 
 seed: 1
+dynamic_bs: false
 enable_offload: false
 total_train_epochs: 5
 tokenizer_path: ${actor.path}
@@ -81,6 +82,9 @@ actor:
   temperature: ${gconfig.temperature}
   reward_scaling: 10.0
   reward_bias: -0.5
+  overlong_reward_penalty: false
+  overlong_tokens: null
+  overlong_penalty_factor: null
   kl_ctl: 0.0
   kl_estimator: k1
   use_sapo_loss: false

@@ -148,6 +148,15 @@ class RLVRWorkflow(RolloutWorkflow):
 
         scalars = {"reward": reward}
         scalars.update(reward_diagnostics)
+        scalars.update(
+            {
+                "prompt_len": resp.input_len,
+                "response_len": resp.output_len,
+                "stop_reason_length": float(resp.stop_reason == "length"),
+                "stop_reason_stop": float(resp.stop_reason == "stop"),
+                "stop_reason_abort": float(resp.stop_reason == "abort"),
+            }
+        )
         stats_tracker.get(workflow_context.stat_scope(self.rollout_stat_scope)).scalar(
             **scalars
         )

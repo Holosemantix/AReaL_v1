@@ -167,6 +167,22 @@ def test_extract_code_picks_last_fence():
     assert "second" in got[1]
 
 
+def test_extract_code_accepts_unterminated_final_fence():
+    text = "```python\nprint('done')\n"
+    got = extract_code(text, expected_language="python")
+    assert got == ("python", "print('done')")
+
+
+def test_extract_code_prefers_last_unterminated_matching_fence():
+    text = (
+        "First try:\n```python\nprint('first')\n```\n"
+        "Second try:\n```python\nprint('second')\n"
+    )
+    got = extract_code(text, expected_language="python")
+    assert got is not None
+    assert "second" in got[1]
+
+
 # end-to-end reward fn ---------------------------------------------------------
 
 

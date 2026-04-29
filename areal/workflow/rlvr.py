@@ -126,7 +126,14 @@ class RLVRWorkflow(RolloutWorkflow):
 
         reward = await self._compute_rewards(resp, prompt_str, task_data)
 
-        stats_tracker.get(workflow_context.stat_scope()).scalar(reward=reward)
+        stats_tracker.get(workflow_context.stat_scope()).scalar(
+            reward=reward,
+            prompt_len=resp.input_len,
+            response_len=resp.output_len,
+            stop_reason_length=float(resp.stop_reason == "length"),
+            stop_reason_stop=float(resp.stop_reason == "stop"),
+            stop_reason_abort=float(resp.stop_reason == "abort"),
+        )
 
         return resp, reward
 

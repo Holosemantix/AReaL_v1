@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import random
 import re
+from collections.abc import Iterator
 
 from areal.reward.code.sandbox import (
     canonical_language,
@@ -25,11 +26,28 @@ from areal.utils import logging
 
 logger = logging.getLogger("CompetitiveCodeReward")
 
-# Group 1: language tag (optional). Group 2: code body.
-_CODE_BLOCK_RE = re.compile(
-    r"```(python|py|cpp|c\+\+|cxx|java|javascript|js|node)?\s*\n(.*?)```",
-    re.DOTALL | re.IGNORECASE,
+# Group 1: language tag (optional).
+_CODE_FENCE_OPEN_RE = re.compile(
+    r"```(python|py|cpp|c\+\+|cxx|java|javascript|js|node)?[^\S\r\n]*(?:\r?\n|$)",
+    re.IGNORECASE,
 )
+
+
+def _iter_code_blocks(text: str) -> Iterator[tuple[str, str]]:
+    pos = 0
+    while True:
+        match = _CODE_FENCE_OPEN_RE.search(text, pos)
+        if match is None:
+            return
+
+        body_start = match.end()
+        body_end = text.find("```", body_start)
+        if body_end == -1:
+            yield match.group(1) or "", text[body_start:]
+            return
+
+        yield match.group(1) or "", text[body_start:body_end]
+        pos = body_end + 3
 
 
 def extract_code(
@@ -43,10 +61,14 @@ def extract_code(
       3. Else fall back to the LAST untagged fence, treated as
          ``expected_language``.
       4. Return None if no fenced block is present.
+
+    The final fence may be unterminated. This commonly happens when generation
+    is cut off by ``max_new_tokens`` after emitting a complete solution but
+    before the closing fence.
     """
     expected_canon = canonical_language(expected_language) or "python"
 
-    matches = _CODE_BLOCK_RE.findall(text)
+    matches = list(_iter_code_blocks(text))
     if not matches:
         return None
 
