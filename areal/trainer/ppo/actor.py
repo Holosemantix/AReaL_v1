@@ -131,6 +131,8 @@ class PPOActor:
         batch_indices = torch.arange(
             bs, device=data["input_ids"].device, dtype=torch.long
         )
+        data["raw_task_rewards"] = data["rewards"].detach().clone()
+        data["overlong_penalties"] = torch.zeros_like(data["rewards"])
 
         # Reward Penalty on length
         if self.config.overlong_reward_penalty:
@@ -282,6 +284,8 @@ class PPOActor:
         seq_stats = dict(
             no_eos_ratios=(response_lens >= self.config.max_new_tokens).float(),
             task_reward=reward_score.float(),
+            raw_task_reward=data["raw_task_rewards"].float(),
+            overlong_penalty=data["overlong_penalties"].float(),
             prompt_len=prompt_lens.float(),
             response_len=response_lens.float(),
             seq_len=seqlens.float(),
@@ -309,7 +313,13 @@ class PPOActor:
 
         # Pop keys that are no longer needed after advantage computation
         # Note: "versions" is kept if needed for approximation/metrics in loss function
-        for key in ["rewards", "tot_rewards", "kl_rewards"]:
+        for key in [
+            "rewards",
+            "tot_rewards",
+            "kl_rewards",
+            "raw_task_rewards",
+            "overlong_penalties",
+        ]:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing
         self.engine.train()

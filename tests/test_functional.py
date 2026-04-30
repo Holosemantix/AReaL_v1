@@ -4,8 +4,43 @@ import torch
 from areal.utils.functional import (
     compute_behave_imp_weight,
     ppo_actor_loss_fn,
+    reward_overlong_penalty,
     sapo_loss_fn,
 )
+
+
+def test_reward_overlong_penalty_logs_raw_reward_and_penalty():
+    data = {
+        "rewards": torch.tensor([1.0, 0.5, -0.5], dtype=torch.float32),
+        "loss_mask": torch.tensor(
+            [
+                [1, 1, 1, 1, 1, 1],
+                [1, 1, 1, 0, 0, 0],
+                [1, 1, 1, 1, 0, 0],
+            ],
+            dtype=torch.int32,
+        ),
+    }
+
+    result = reward_overlong_penalty(
+        data,
+        overlong_tokens=2,
+        overlong_penalty_factor=1.0,
+        max_response_length=6,
+    )
+
+    torch.testing.assert_close(
+        result["raw_task_rewards"],
+        torch.tensor([1.0, 0.5, -0.5], dtype=torch.float32),
+    )
+    torch.testing.assert_close(
+        result["overlong_penalties"],
+        torch.tensor([-1.0, 0.0, 0.0], dtype=torch.float32),
+    )
+    torch.testing.assert_close(
+        result["rewards"],
+        torch.tensor([0.0, 0.5, -0.5], dtype=torch.float32),
+    )
 
 
 class TestPPOActorLossFnSequenceLevel:

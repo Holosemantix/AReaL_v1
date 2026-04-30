@@ -130,9 +130,11 @@ class RLVRWorkflow(RolloutWorkflow):
             reward=reward,
             prompt_len=resp.input_len,
             response_len=resp.output_len,
-            stop_reason_length=float(resp.stop_reason == "length"),
-            stop_reason_stop=float(resp.stop_reason == "stop"),
-            stop_reason_abort=float(resp.stop_reason == "abort"),
+            **{
+                "finish_reason/length": float(resp.stop_reason == "length"),
+                "finish_reason/stop": float(resp.stop_reason == "stop"),
+                "finish_reason/abort": float(resp.stop_reason == "abort"),
+            },
         )
 
         return resp, reward

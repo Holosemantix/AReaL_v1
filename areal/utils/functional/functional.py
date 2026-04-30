@@ -482,21 +482,19 @@ def reward_overlong_penalty(
     max_response_length: int,
 ) -> dict[str, Any]:
     reward_score = data["rewards"]
-    input_ids = data["input_ids"]
-    response_lengths = (data["loss_mask"].sum(dim=-1)).long()
-    batch_size = input_ids.shape[0]
-    for sample_idx in range(batch_size):
-        reward_score_cur = reward_score[sample_idx]
-        response_length_cur = response_lengths[sample_idx]
-        expected_len = max_response_length - overlong_tokens
-        exceed_len = response_length_cur - expected_len
-        overlong_reward = min(
-            -exceed_len / overlong_tokens * overlong_penalty_factor, 0
-        )
-        reward_score_cur += overlong_reward
-        reward_score[sample_idx] = reward_score_cur
+    if "raw_task_rewards" not in data:
+        data["raw_task_rewards"] = reward_score.detach().clone()
 
-    data["rewards"] = reward_score
+    response_lengths = data["loss_mask"].sum(dim=-1).to(dtype=reward_score.dtype)
+    expected_len = max_response_length - overlong_tokens
+    exceed_len = response_lengths - expected_len
+    overlong_penalties = torch.minimum(
+        -exceed_len / overlong_tokens * overlong_penalty_factor,
+        torch.zeros_like(reward_score),
+    )
+
+    data["overlong_penalties"] = overlong_penalties
+    data["rewards"] = reward_score + overlong_penalties
     return data
 
 
