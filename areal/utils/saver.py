@@ -14,6 +14,15 @@ from areal.utils.logging import getLogger
 logger = getLogger("Saver")
 
 
+def _hf_artifact_path(
+    artifact: object | None, fallback: str | None = None
+) -> str | None:
+    path = getattr(artifact, "name_or_path", None)
+    if isinstance(path, str) and path:
+        return path
+    return fallback
+
+
 class Saver:
     def __init__(self, config: SaverConfig, ft_spec: FinetuneSpec):
         self.config = config
@@ -138,15 +147,31 @@ class Saver:
             name,
         )
 
+        tokenizer_path = _hf_artifact_path(tokenizer, base_model_path)
+        processor_path = _hf_artifact_path(
+            processor,
+            tokenizer_path if processor is not None else None,
+        )
+
         if self._should_use_async(engine):
-            self._async_save(engine, path, name, tokenizer, processor)
+            self._async_save(
+                engine,
+                path,
+                name,
+                tokenizer,
+                processor,
+                tokenizer_path=tokenizer_path,
+                processor_path=processor_path,
+            )
         else:
             meta = SaveLoadMeta(
                 path=path,
                 weight_format="hf",
                 with_optim=False,
-                tokenizer=tokenizer,
-                processor=processor,
+                tokenizer=None,
+                processor=None,
+                tokenizer_path=tokenizer_path,
+                processor_path=processor_path,
                 base_model_path=base_model_path,
             )
             engine.save(meta)
@@ -158,6 +183,8 @@ class Saver:
         name: str,
         tokenizer: PreTrainedTokenizerFast | None,
         processor: AutoProcessor | None,
+        tokenizer_path: str | None,
+        processor_path: str | None,
     ):
         """Archon async save."""
         from areal.experimental.engine.archon_engine import ArchonEngine
@@ -171,7 +198,15 @@ class Saver:
 
         from areal.experimental.engine.archon_checkpoint import save_model_to_hf
 
-        save_model_to_hf(engine, path, tokenizer, processor, async_mgr=mgr)
+        save_model_to_hf(
+            engine,
+            path,
+            tokenizer,
+            processor,
+            tokenizer_path=tokenizer_path,
+            processor_path=processor_path,
+            async_mgr=mgr,
+        )
 
     def maybe_wait_for_staging(self):
         """Wait for all engines' staging to complete. Call before ppo_update."""

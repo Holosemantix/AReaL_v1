@@ -97,7 +97,7 @@ from areal.utils.data import (
     unpad_logits,
 )
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
-from areal.utils.hf_utils import load_hf_tokenizer
+from areal.utils.hf_utils import load_hf_tokenizer, save_hf_tokenizer_and_processor
 from areal.utils.lock import DistributedLock
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
@@ -518,6 +518,8 @@ class MegatronEngine(TrainEngine):
                 meta.path,
                 tokenizer=meta.tokenizer,
                 processor=meta.processor,
+                tokenizer_path=meta.tokenizer_path,
+                processor_path=meta.processor_path,
                 base_model_path=meta.base_model_path,
             )
         elif meta.weight_format == "dcp":
@@ -1359,6 +1361,8 @@ class MegatronEngine(TrainEngine):
         path: str,
         tokenizer: Any | None = None,
         processor: Any | None = None,
+        tokenizer_path: str | None = None,
+        processor_path: str | None = None,
         base_model_path: str | None = None,
     ) -> None:
         assert self.model is not None, "Model is not initialized."
@@ -1376,10 +1380,13 @@ class MegatronEngine(TrainEngine):
         )
 
         if dist.get_rank() == 0:
-            if tokenizer is not None:
-                tokenizer.save_pretrained(path)
-            if processor is not None:
-                processor.save_pretrained(path)
+            save_hf_tokenizer_and_processor(
+                path,
+                tokenizer=tokenizer,
+                processor=processor,
+                tokenizer_path=tokenizer_path,
+                processor_path=processor_path,
+            )
 
         current_platform.synchronize()
         dist.barrier(group=self.cpu_group)

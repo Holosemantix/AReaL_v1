@@ -19,6 +19,7 @@ from torch.distributed.checkpoint.state_dict import (
 )
 from torch.distributed.checkpoint.stateful import Stateful
 
+from areal.utils.hf_utils import save_hf_tokenizer_and_processor
 from areal.utils.logging import getLogger
 
 if TYPE_CHECKING:
@@ -218,8 +219,10 @@ def _write_safetensors_index(
 def save_model_to_hf(
     engine: ArchonEngine,
     path: str,
-    tokenizer: PreTrainedTokenizerFast | None,
+    tokenizer: PreTrainedTokenizerFast | None = None,
     processor: AutoProcessor | None = None,
+    tokenizer_path: str | None = None,
+    processor_path: str | None = None,
     async_mgr: AsyncCheckpointManager | None = None,
 ) -> None:
     """Save model in HuggingFace format using DCP infrastructure.
@@ -229,6 +232,8 @@ def save_model_to_hf(
         path: Output directory for the HF checkpoint.
         tokenizer: Optional tokenizer to save alongside the model.
         processor: Optional processor to save alongside the model.
+        tokenizer_path: Optional tokenizer path to reload before saving.
+        processor_path: Optional processor path to reload before saving.
         async_mgr: Optional async checkpoint manager. When provided and async
             is enabled, dcp.async_save() is used instead of dcp.save().
             The manager's post_upload_fn is set to handle consolidation.
@@ -298,10 +303,13 @@ def save_model_to_hf(
                 shutil.rmtree(sharded_dir)
             # Write config / tokenizer / processor into temp dir
             engine.model_config.save_pretrained(tmp_path)
-            if tokenizer is not None:
-                tokenizer.save_pretrained(tmp_path)
-            if processor is not None:
-                processor.save_pretrained(tmp_path)
+            save_hf_tokenizer_and_processor(
+                tmp_path,
+                tokenizer=tokenizer,
+                processor=processor,
+                tokenizer_path=tokenizer_path,
+                processor_path=processor_path,
+            )
             # Atomically swap temp dir to final path
             if os.path.exists(path):
                 shutil.rmtree(path)

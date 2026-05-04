@@ -276,6 +276,7 @@ class RecoverHandler:
         processor: AutoProcessor | None = None,
         base_model_path: str | None = None,
     ):
+        _ = tokenizer, processor, base_model_path
         path = Saver.get_recover_checkpoint_path(
             self.config.experiment_name,
             self.config.trial_name,
@@ -288,9 +289,9 @@ class RecoverHandler:
             path=path,
             weight_format=weight_format,
             with_optim=with_optim,
-            tokenizer=tokenizer,
-            processor=processor,
-            base_model_path=base_model_path,
+            tokenizer=None,
+            processor=None,
+            base_model_path=None,
         )
         engine.save(meta)
         logger.info(f"Saved recover checkpoint to {path}")

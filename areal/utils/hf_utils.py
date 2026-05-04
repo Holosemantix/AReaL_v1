@@ -53,6 +53,34 @@ def load_hf_processor_and_tokenizer(
     return processor, tokenizer
 
 
+def save_hf_tokenizer_and_processor(
+    path: str,
+    tokenizer: transformers.PreTrainedTokenizerFast | None = None,
+    processor: transformers.ProcessorMixin | None = None,
+    tokenizer_path: str | None = None,
+    processor_path: str | None = None,
+) -> None:
+    if tokenizer is None and tokenizer_path is not None:
+        tokenizer = load_hf_tokenizer(tokenizer_path)
+    if processor is None and processor_path is not None:
+        try:
+            processor = transformers.AutoProcessor.from_pretrained(
+                processor_path,
+                trust_remote_code=True,
+                force_download=True,
+                use_fast=True,
+            )
+        except Exception:
+            processor = None
+            logger.warning(
+                f"Failed to load processor for {processor_path}. Saving tokenizer only."
+            )
+    if tokenizer is not None:
+        tokenizer.save_pretrained(path)
+    if processor is not None:
+        processor.save_pretrained(path)
+
+
 def download_from_huggingface(
     repo_id: str, filename: str, revision: str = "main", repo_type: str = "dataset"
 ) -> str:

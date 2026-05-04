@@ -97,6 +97,7 @@ from areal.models.tree_attn.module import (
     patch_fsdp_for_tree_training,
 )
 from areal.models.tree_attn.tree import TrieNode, build_packed_tree_batch
+from areal.optimizer.muon import Muon
 from areal.utils import (
     logging,
     name_resolve,
@@ -115,9 +116,12 @@ from areal.utils.data import (
     split_padded_tensor_dict_into_mb_list,
     unsqueeze_mb_list,
 )
-from areal.optimizer.muon import Muon
 from areal.utils.functional import gather_logprobs, gather_logprobs_entropy
-from areal.utils.hf_utils import load_hf_processor_and_tokenizer, load_hf_tokenizer
+from areal.utils.hf_utils import (
+    load_hf_processor_and_tokenizer,
+    load_hf_tokenizer,
+    save_hf_tokenizer_and_processor,
+)
 from areal.utils.network import find_free_ports, gethostip
 from areal.utils.offload import is_tms_enabled, torch_memory_saver
 from areal.utils.perf_tracer import trace_perf, trace_scope
@@ -490,7 +494,13 @@ class FSDPEngine(TrainEngine):
 
     def save(self, meta: SaveLoadMeta):
         if meta.weight_format == "hf":
-            self._save_model_to_hf(meta.path, meta.tokenizer, meta.processor)
+            self._save_model_to_hf(
+                meta.path,
+                meta.tokenizer,
+                meta.processor,
+                tokenizer_path=meta.tokenizer_path,
+                processor_path=meta.processor_path,
+            )
         elif meta.weight_format == "dcp":
             self._save_to_dcp(meta.path, meta.with_optim)
         else:
@@ -1215,6 +1225,8 @@ class FSDPEngine(TrainEngine):
         path: str,
         tokenizer: PreTrainedTokenizerFast | None,
         processor: ProcessorMixin | None,
+        tokenizer_path: str | None = None,
+        processor_path: str | None = None,
     ):
         """Save model in HuggingFace format."""
         if self.model is None:
@@ -1231,10 +1243,13 @@ class FSDPEngine(TrainEngine):
             os.makedirs(path, exist_ok=True)
             self.model.save_pretrained(path, state_dict=state_dict)
             self.model_config.save_pretrained(path)
-            if tokenizer is not None:
-                tokenizer.save_pretrained(path)
-            if processor is not None:
-                processor.save_pretrained(path)
+            save_hf_tokenizer_and_processor(
+                path,
+                tokenizer=tokenizer,
+                processor=processor,
+                tokenizer_path=tokenizer_path,
+                processor_path=processor_path,
+            )
         dist.barrier(group=self.cpu_group)
 
     def _load_model_from_hf(self, path: str):
