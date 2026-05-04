@@ -189,7 +189,9 @@ valid_dataset:
   batch_size: 128
   pin_memory: true
   num_workers: 4
-  path: ""
+  path: "/opt/huawei/dataset/ag_data_nlp/RL/livecodebench/code_generation_lite,
+  /opt/huawei/dataset/ag_data_nlp/RL/BAAI/TACO,
+  /opt/huawei/dataset/ag_data_nlp/RL/codeparrot/apps"
   type: rl
   drop_last: false
 

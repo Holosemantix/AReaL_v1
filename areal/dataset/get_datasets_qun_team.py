@@ -10,7 +10,23 @@ if TYPE_CHECKING:
     from transformers.processing_utils import ProcessorMixin
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
-VALID_DATASETS = ["gsm8k", "clevr_count_70k", "geometry3k", "hh-rlhf", "torl_data", "bigmath", "ringlite", "math500", "aime24", "aime25", "hmmt25", "nemotron_code"]
+VALID_DATASETS = [
+    "gsm8k",
+    "clevr_count_70k",
+    "geometry3k",
+    "hh-rlhf",
+    "torl_data",
+    "bigmath",
+    "ringlite",
+    "math500",
+    "aime24",
+    "aime25",
+    "hmmt25",
+    "nemotron_code",
+    "apps_code",
+    "taco_code",
+    "livecodebench_code",
+]
 
 logger = logging.getLogger("Dataset")
 
@@ -181,6 +197,40 @@ def _get_custom_dataset(
             from .code.nemotron_competitive import get_nemotron_competitive_rl_dataset
 
             dataset_map['nemotron_code'] = get_nemotron_competitive_rl_dataset(
+                path=path,
+                split=split,
+                tokenizer=tokenizer,
+                max_length=max_length,
+                **kwargs,
+            )
+        elif "codeparrot/apps" in path.lower() and type == "rl":
+            from .code.competitive_eval import get_apps_code_rl_dataset
+
+            dataset_map["apps_code"] = get_apps_code_rl_dataset(
+                path=path,
+                split=split,
+                tokenizer=tokenizer,
+                max_length=max_length,
+                **kwargs,
+            )
+        elif "taco" in path.lower() and type == "rl":
+            from .code.competitive_eval import get_taco_code_rl_dataset
+
+            dataset_map["taco_code"] = get_taco_code_rl_dataset(
+                path=path,
+                split=split,
+                tokenizer=tokenizer,
+                max_length=max_length,
+                **kwargs,
+            )
+        elif (
+            "livecodebench" in path.lower()
+            and "code_generation" in path.lower()
+            and type == "rl"
+        ):
+            from .code.competitive_eval import get_livecodebench_code_rl_dataset
+
+            dataset_map["livecodebench_code"] = get_livecodebench_code_rl_dataset(
                 path=path,
                 split=split,
                 tokenizer=tokenizer,
