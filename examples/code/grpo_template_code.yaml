@@ -180,7 +180,7 @@ train_dataset:
   shuffle: true
   pin_memory: true
   num_workers: 4
-  path: /opt/huawei/dataset/ag_data_nlp/RL/Nemotron-RL-coding-competitive_coding
+  path: /opt/huawei/dataset/ag_data/data/nvidia/Nemotron-RL-coding-competitive_coding
   type: rl
   max_length: 4096
   drop_last: true
@@ -189,9 +189,9 @@ valid_dataset:
   batch_size: 128
   pin_memory: true
   num_workers: 4
-  path: "/opt/huawei/dataset/ag_data_nlp/RL/livecodebench/code_generation_lite,
-  /opt/huawei/dataset/ag_data_nlp/RL/BAAI/TACO,
-  /opt/huawei/dataset/ag_data_nlp/RL/codeparrot/apps"
+  path: "/opt/huawei/explorer-env/dataset/ag_data/data/livecodebench/code_generation_lite,
+  /opt/huawei/explorer-env/dataset/ag_data/data/BAAI/TACO,
+  /opt/huawei/explorer-env/dataset/ag_data/data/codeparrot/apps"
   type: rl
   drop_last: false
 
