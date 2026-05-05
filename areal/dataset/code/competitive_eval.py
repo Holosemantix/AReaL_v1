@@ -7,6 +7,7 @@ import json
 import os
 import pickle
 import zlib
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from datasets import load_dataset
@@ -16,6 +17,44 @@ if TYPE_CHECKING:
     from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 
+_DATA_FILE_SUFFIXES = (".parquet", ".jsonl", ".json")
+
+
+def _matches_split(path: Path, root: Path, split: str | None) -> bool:
+    if split is None:
+        return True
+    relative = path.relative_to(root)
+    return (
+        split in relative.parts[:-1]
+        or path.name == f"{split}{path.suffix}"
+        or path.name.startswith(f"{split}-")
+        or path.name.startswith(f"{split}.")
+    )
+
+
+def _find_data_files(path: str, split: str | None) -> tuple[str, list[str]] | None:
+    root = Path(path)
+    files = [
+        file
+        for file in root.rglob("*")
+        if file.is_file()
+        and file.suffix in _DATA_FILE_SUFFIXES
+        and _matches_split(file, root, split)
+    ]
+    if not files:
+        return None
+
+    for suffix, dataset_type in (
+        (".parquet", "parquet"),
+        (".jsonl", "json"),
+        (".json", "json"),
+    ):
+        selected = sorted(str(file) for file in files if file.suffix == suffix)
+        if selected:
+            return dataset_type, selected
+    return None
+
+
 def _load_raw(path: str, split: str | None) -> Dataset:
     if os.path.isfile(path):
         if path.endswith((".json", ".jsonl")):
@@ -23,8 +62,17 @@ def _load_raw(path: str, split: str | None) -> Dataset:
         if path.endswith(".parquet"):
             return load_dataset("parquet", data_files=path, split="train")
     if os.path.isdir(path):
-        return load_dataset(path=path, split=split, trust_remote_code=True)
-    return load_dataset(path=path, split=split, trust_remote_code=True)
+        data_files = _find_data_files(path, split)
+        if data_files is not None:
+            dataset_type, files = data_files
+            dataset_split = split or "train"
+            return load_dataset(
+                dataset_type,
+                data_files={dataset_split: files},
+                split=dataset_split,
+            )
+        return load_dataset(path=path, split=split)
+    return load_dataset(path=path, split=split)
 
 
 def _loads_jsonish(value: Any, default: Any):

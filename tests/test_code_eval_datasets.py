@@ -9,6 +9,7 @@ from areal.dataset.code.competitive_eval import (
     _build_messages,
     _extract_apps_style_tests,
     _extract_livecodebench_tests,
+    _find_data_files,
 )
 
 
@@ -96,3 +97,32 @@ def test_build_messages_instructs_complete_stdin_program():
             ),
         }
     ]
+
+
+def test_find_data_files_ignores_dataset_script_and_selects_split(tmp_path):
+    (tmp_path / "code_generation_lite.py").write_text("raise RuntimeError\n")
+    (tmp_path / "README.md").write_text("dataset card\n")
+    (tmp_path / "train.jsonl").write_text("{}\n")
+    (tmp_path / "test.jsonl").write_text("{}\n")
+
+    data_files = _find_data_files(str(tmp_path), split="test")
+
+    assert data_files == ("json", [str(tmp_path / "test.jsonl")])
+
+
+def test_find_data_files_prefers_parquet_split_shards(tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (data_dir / "test-00000-of-00002.parquet").write_bytes(b"")
+    (data_dir / "test-00001-of-00002.parquet").write_bytes(b"")
+    (data_dir / "train-00000-of-00001.parquet").write_bytes(b"")
+
+    data_files = _find_data_files(str(tmp_path), split="test")
+
+    assert data_files == (
+        "parquet",
+        [
+            str(data_dir / "test-00000-of-00002.parquet"),
+            str(data_dir / "test-00001-of-00002.parquet"),
+        ],
+    )
