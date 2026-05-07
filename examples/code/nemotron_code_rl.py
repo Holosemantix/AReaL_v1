@@ -13,6 +13,7 @@ Note:
 """
 
 import sys
+from dataclasses import asdict, is_dataclass
 
 from examples.code.nemotron_configs import CodeGRPOConfig
 
@@ -65,6 +66,9 @@ def main(args):
             tokenizer=config.tokenizer_path,
             enable_thinking=config.gconfig.enable_thinking,
             reward_timeout_seconds=config.code_reward.reward_timeout_seconds,
+            model_scorer=asdict(config.model_scorer)
+            if is_dataclass(config.model_scorer)
+            else config.model_scorer,
         )
 
         eval_workflow_kwargs_map = {}

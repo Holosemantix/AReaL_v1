@@ -19,6 +19,7 @@ from areal.utils.perf_tracer import (
     session_context,
     trace_session,
 )
+from areal.workflow.model_scorer import ModelScorer
 
 logger = logging.getLogger("RLVRWorkflow")
 
@@ -57,6 +58,7 @@ class RLVRWorkflow(RolloutWorkflow):
         data_extract_prompt_fn: Callable[[dict[str, Any]], Any]
         | str = default_data_extract_prompt_fn,
         reward_timeout_seconds: float = 15.0,
+        model_scorer: dict[str, Any] | None = None,
     ):
         self.reward_fn = reward_fn
         self.tokenizer = tokenizer
@@ -70,6 +72,11 @@ class RLVRWorkflow(RolloutWorkflow):
         self.enable_thinking = enable_thinking
         self.ig_reward_params = ig_reward_params
         self.reward_timeout_seconds = reward_timeout_seconds
+        self.model_scorer = ModelScorer(
+            model_scorer,
+            tokenizer=self.tokenizer,
+            gconfig=self.gconfig,
+        )
         if not isinstance(reward_fn, str):
             self.async_reward_fn = AsyncRewardWrapper(
                 reward_fn, timeout_seconds=reward_timeout_seconds
@@ -86,6 +93,7 @@ class RLVRWorkflow(RolloutWorkflow):
     @trace_session("reward")
     async def _compute_rewards(
         self,
+        engine: InferenceEngine,
         resp: ModelResponse,
         prompt_str: str,
         task_data: dict[str, Any],
@@ -116,9 +124,20 @@ class RLVRWorkflow(RolloutWorkflow):
                 for key, value in reward_result.items()
                 if key != "reward" and isinstance(value, int | float)
             }
-            return reward, diagnostics
+        else:
+            reward = float(reward_result)
+            diagnostics = {}
 
-        return float(reward_result), {}
+        reward, scorer_diagnostics = await self.model_scorer.score_and_combine(
+            engine=engine,
+            rule_reward=reward,
+            resp=resp,
+            prompt_str=prompt_str,
+            completion_str=completions_str,
+            task_data=task_data,
+        )
+        diagnostics.update(scorer_diagnostics)
+        return reward, diagnostics
 
     @session_context()
     async def _collect_samples(
@@ -143,7 +162,7 @@ class RLVRWorkflow(RolloutWorkflow):
             resp = await engine.agenerate(req)
 
         reward, reward_diagnostics = await self._compute_rewards(
-            resp, prompt_str, task_data
+            engine, resp, prompt_str, task_data
         )
 
         scalars = {"reward": reward}

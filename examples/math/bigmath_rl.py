@@ -1,5 +1,5 @@
 import sys
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, is_dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -11,6 +11,7 @@ from areal.trainer.rl_trainer_qun_team import PPOTrainer
 from areal.utils.hf_utils import load_hf_tokenizer
 from areal.reward.math_verify_qun_team import math_verify_reward_fn
 from areal.workflow.rlvr_qun_team import RLVRWorkflow, default_get_input_ids_fn, default_data_extract_prompt_fn
+from areal.workflow.model_scorer import ModelScorerConfig
 
 
 @dataclass
@@ -74,6 +75,7 @@ class InfoGainPPOActorConfig(PPOActorConfig):
 @dataclass
 class InfoGainGRPOConfig(GRPOConfig):
     actor: InfoGainPPOActorConfig = field(default_factory=InfoGainPPOActorConfig)
+    model_scorer: ModelScorerConfig = field(default_factory=ModelScorerConfig)
 
 
 def main(args):
@@ -109,6 +111,9 @@ def main(args):
             gconfig=config.gconfig,
             tokenizer=config.tokenizer_path,
             enable_thinking=config.gconfig.enable_thinking,
+            model_scorer=asdict(config.model_scorer)
+            if is_dataclass(config.model_scorer)
+            else config.model_scorer,
         )
 
         eval_workflow_kwargs_map = {}

@@ -8,6 +8,7 @@ defined directly in a ``__main__`` script cannot be imported by workers.
 from dataclasses import dataclass, field
 
 from areal.api.cli_args import GRPOConfig, PPOActorConfig
+from areal.workflow.model_scorer import ModelScorerConfig
 
 
 @dataclass
@@ -64,3 +65,4 @@ class CodeRewardConfig:
 class CodeGRPOConfig(GRPOConfig):
     actor: InfoGainPPOActorConfig = field(default_factory=InfoGainPPOActorConfig)
     code_reward: CodeRewardConfig = field(default_factory=CodeRewardConfig)
+    model_scorer: ModelScorerConfig = field(default_factory=ModelScorerConfig)

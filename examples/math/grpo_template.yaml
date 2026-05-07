@@ -214,6 +214,30 @@ stats_logger:
     mode: disabled
     api_key: null
 
+model_scorer:
+  enabled: false
+  backend: external
+  base_url: null
+  api_key: null
+  model: null
+  timeout_seconds: 60.0
+  max_concurrent_requests: 32
+  temperature: 0.0
+  max_tokens: 32
+  combine_mode: blend
+  weight: 0.5
+  min_score: 0.0
+  max_score: 1.0
+  fallback_score: 0.0
+  input:
+    mode: prompt_completion
+    prompt_tail_tokens: null
+    completion_tail_tokens: null
+    include_answer: true
+    include_tests: false
+    max_field_chars: 4096
+    system_prompt: "You are a strict reward model. Return only JSON with a score in [0, 1]."
+
 perf_tracer:
   experiment_name: ${experiment_name}
   trial_name: ${trial_name}
