@@ -83,6 +83,26 @@ def _loads_jsonish(value: Any, default: Any):
     return value
 
 
+def _stdio_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, list | tuple):
+        return "\n".join(_stdio_text(item) for item in value)
+    return str(value)
+
+
+def _normalize_stdio_tests(
+    inputs: list[Any], outputs: list[Any]
+) -> tuple[list[str], list[str]]:
+    if len(inputs) != len(outputs):
+        return [], []
+    return [_stdio_text(item) for item in inputs], [_stdio_text(item) for item in outputs]
+
+
 def _build_messages(
     problem: str,
     *,
@@ -122,9 +142,7 @@ def _extract_apps_style_tests(input_output: Any) -> tuple[list[str], list[str]]:
         return [], []
     inputs = list(data.get("inputs") or [])
     outputs = list(data.get("outputs") or [])
-    if len(inputs) != len(outputs):
-        return [], []
-    return inputs, outputs
+    return _normalize_stdio_tests(inputs, outputs)
 
 
 def _decode_livecodebench_private_tests(value: Any) -> list[dict[str, Any]]:
@@ -147,9 +165,7 @@ def _extract_livecodebench_tests(
             continue
         inputs.append(case.get("input", ""))
         outputs.append(case.get("output", ""))
-    if len(inputs) != len(outputs):
-        return [], []
-    return inputs, outputs
+    return _normalize_stdio_tests(inputs, outputs)
 
 
 def get_apps_code_rl_dataset(
