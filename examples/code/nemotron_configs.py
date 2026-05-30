@@ -34,6 +34,32 @@ class InfoGainPPOActorConfig(PPOActorConfig):
 
 
 @dataclass
+class ShortestCorrectRewardConfig:
+    """Group-relative length penalty for correct code rollouts.
+
+    A correct rollout is one whose raw execution reward is at least
+    ``reward_threshold``. Only correct rollouts in groups with at least
+    ``min_correct`` correct samples are penalized.
+    """
+
+    enabled: bool = field(default=False)
+    alpha: float = field(default=0.1)
+    reward_threshold: float = field(default=1.0)
+    min_correct: int = field(default=2)
+    group_size: int | None = field(default=None)
+    normalize_by_shortest: bool = field(default=True)
+    max_penalty: float | None = field(default=1.0)
+    min_shortest_len: int = field(default=1)
+
+
+@dataclass
+class CodePPOActorConfig(InfoGainPPOActorConfig):
+    shortest_correct_reward: ShortestCorrectRewardConfig = field(
+        default_factory=ShortestCorrectRewardConfig
+    )
+
+
+@dataclass
 class CodeRewardConfig:
     """Budget for the competitive-coding execution reward.
 
@@ -63,6 +89,6 @@ class CodeRewardConfig:
 
 @dataclass
 class CodeGRPOConfig(GRPOConfig):
-    actor: InfoGainPPOActorConfig = field(default_factory=InfoGainPPOActorConfig)
+    actor: CodePPOActorConfig = field(default_factory=CodePPOActorConfig)
     code_reward: CodeRewardConfig = field(default_factory=CodeRewardConfig)
     model_scorer: ModelScorerConfig = field(default_factory=ModelScorerConfig)

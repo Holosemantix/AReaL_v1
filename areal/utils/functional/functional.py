@@ -498,6 +498,79 @@ def reward_overlong_penalty(
     return data
 
 
+def reward_shortest_correct_penalty(
+    data: dict[str, Any],
+    group_size: int,
+    alpha: float,
+    reward_threshold: float = 1.0,
+    min_correct: int = 2,
+    normalize_by_shortest: bool = True,
+    max_penalty: float | None = None,
+    min_shortest_len: int = 1,
+) -> dict[str, Any]:
+    """Penalize correct samples that are longer than the shortest correct peer."""
+    reward_score = data["rewards"]
+    penalties = torch.zeros_like(reward_score)
+
+    if group_size <= 1 or alpha <= 0 or reward_score.numel() == 0:
+        data["shortest_correct_penalties"] = penalties
+        data["shortest_correct_active"] = torch.zeros_like(reward_score)
+        data["shortest_correct_target_len"] = torch.zeros_like(reward_score)
+        return data
+
+    raw_rewards = data.get("raw_task_rewards", reward_score).to(dtype=reward_score.dtype)
+    response_lengths = data["loss_mask"].sum(dim=-1).to(dtype=reward_score.dtype)
+
+    bs = reward_score.shape[0]
+    padded_bs = ((bs + group_size - 1) // group_size) * group_size
+    pad = padded_bs - bs
+
+    valid = torch.ones_like(reward_score, dtype=torch.bool)
+    if pad:
+        raw_rewards = F.pad(raw_rewards, (0, pad), value=float("-inf"))
+        response_lengths = F.pad(response_lengths, (0, pad), value=0.0)
+        valid = F.pad(valid, (0, pad), value=False)
+
+    group_rewards = raw_rewards.view(-1, group_size)
+    group_lengths = response_lengths.view(-1, group_size)
+    group_valid = valid.view(-1, group_size)
+
+    correct = (group_rewards >= reward_threshold) & group_valid
+    correct_count = correct.sum(dim=-1, keepdim=True)
+    active_group = correct_count >= min_correct
+
+    inf_lengths = torch.full_like(group_lengths, float("inf"))
+    shortest_correct_len = torch.where(correct, group_lengths, inf_lengths).amin(
+        dim=-1, keepdim=True
+    )
+    shortest_correct_len = shortest_correct_len.clamp(min=float(min_shortest_len))
+
+    excess = (group_lengths - shortest_correct_len).clamp(min=0.0)
+    denominator = shortest_correct_len if normalize_by_shortest else 1.0
+    group_penalties = -alpha * excess / denominator
+    group_penalties = torch.where(
+        correct & active_group,
+        group_penalties,
+        torch.zeros_like(group_penalties),
+    )
+    if max_penalty is not None and max_penalty > 0:
+        group_penalties = group_penalties.clamp(min=-max_penalty)
+
+    penalties = group_penalties.reshape(-1)[:bs]
+    active = (correct & active_group).to(dtype=reward_score.dtype).reshape(-1)[:bs]
+    targets = torch.where(
+        active_group.expand_as(group_lengths),
+        shortest_correct_len.expand_as(group_lengths),
+        torch.zeros_like(group_lengths),
+    ).reshape(-1)[:bs]
+
+    data["shortest_correct_penalties"] = penalties
+    data["shortest_correct_active"] = active
+    data["shortest_correct_target_len"] = targets
+    data["rewards"] = reward_score + penalties
+    return data
+
+
 # =============================================================================
 # New Functions for Decomposed IG / PRM Reward Calculation
 # =============================================================================
@@ -861,10 +934,6 @@ def _compute_rewards_logic(
     log_probs = [torch.as_tensor(lp, dtype=torch.float32, device=device) for lp in log_probs]
 
     norm_len = max(1, gt_len)
-    min_step_len = 20
-    max_step_len = 256
-    len_penalty_factor = 0.002
-
     # 提取 P_0 作为初始水位
     p_0_tensor = torch.exp(log_probs[0] / norm_len)
     initial_watermark = p_0_tensor.item() if isinstance(p_0_tensor, torch.Tensor) else p_0_tensor
@@ -902,13 +971,6 @@ def _compute_rewards_logic(
 
         # [修改] 暂时不用长度惩罚，强置为 0.0
         len_penalty = 0.0
-        # if step_lengths is not None and t - 1 < len(step_lengths):
-        #     s_len = step_lengths[t - 1]
-        #     if s_len < min_step_len:
-        #         len_penalty = -len_penalty_factor * (min_step_len - s_len)
-        #     elif s_len > max_step_len:
-        #         len_penalty = -len_penalty_factor * (s_len - max_step_len)
-
         final_rewards.append(clipped_r_t)
         final_penalties.append(torch.tensor(len_penalty).to(device) if device else len_penalty)
 

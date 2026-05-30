@@ -25,6 +25,7 @@ from areal.utils.data import (
 from areal.utils.functional import (
     ppo_actor_loss_fn,
     reward_overlong_penalty,
+    reward_shortest_correct_penalty,
     sapo_loss_fn,
 )
 from areal.utils.perf_tracer import trace_perf
@@ -112,6 +113,9 @@ class PPOActor:
         logger.info(
             f"  reward_norm: {config.reward_norm if config.reward_norm else 'DISABLED (None)'}"
         )
+        shortest_correct_reward = getattr(config, "shortest_correct_reward", None)
+        if shortest_correct_reward is not None:
+            logger.info(f"  shortest_correct_reward: {shortest_correct_reward}")
         logger.info(f"  eps_clip: {config.eps_clip}")
         logger.info("=" * 70)
 
@@ -146,6 +150,24 @@ class PPOActor:
                 overlong_tokens=overlong_tokens,
                 overlong_penalty_factor=overlong_penalty_factor,
                 max_response_length=self.config.max_new_tokens,
+            )
+
+        shortest_correct_reward = getattr(self.config, "shortest_correct_reward", None)
+        if shortest_correct_reward is not None and getattr(
+            shortest_correct_reward, "enabled", False
+        ):
+            group_size = getattr(shortest_correct_reward, "group_size", None)
+            if group_size is None and self.config.reward_norm is not None:
+                group_size = self.config.reward_norm.group_size
+            data = reward_shortest_correct_penalty(
+                data,
+                group_size=group_size or 1,
+                alpha=shortest_correct_reward.alpha,
+                reward_threshold=shortest_correct_reward.reward_threshold,
+                min_correct=shortest_correct_reward.min_correct,
+                normalize_by_shortest=shortest_correct_reward.normalize_by_shortest,
+                max_penalty=shortest_correct_reward.max_penalty,
+                min_shortest_len=shortest_correct_reward.min_shortest_len,
             )
 
         # Reward Scaling
@@ -290,6 +312,12 @@ class PPOActor:
             response_len=response_lens.float(),
             seq_len=seqlens.float(),
         )
+        if "shortest_correct_penalties" in data:
+            seq_stats.update(
+                shortest_correct_penalty=data["shortest_correct_penalties"].float(),
+                shortest_correct_active=data["shortest_correct_active"].float(),
+                shortest_correct_target_len=data["shortest_correct_target_len"].float(),
+            )
         stats_tracker.stat(**seq_stats, denominator="n_seqs")
         scalars = dict(
             mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
@@ -319,6 +347,9 @@ class PPOActor:
             "kl_rewards",
             "raw_task_rewards",
             "overlong_penalties",
+            "shortest_correct_penalties",
+            "shortest_correct_active",
+            "shortest_correct_target_len",
         ]:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing

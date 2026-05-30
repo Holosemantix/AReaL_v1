@@ -85,6 +85,15 @@ actor:
   overlong_reward_penalty: false
   overlong_tokens: null
   overlong_penalty_factor: null
+  shortest_correct_reward:
+    enabled: false
+    alpha: 0.1
+    reward_threshold: 1.0
+    min_correct: 2
+    group_size: ${gconfig.n_samples}
+    normalize_by_shortest: true
+    max_penalty: 1.0
+    min_shortest_len: 1
   kl_ctl: 0.0
   kl_estimator: k1
   use_sapo_loss: false
