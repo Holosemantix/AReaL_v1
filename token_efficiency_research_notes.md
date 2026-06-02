@@ -1,6 +1,6 @@
 # 精简推理与 Token 效率优化技术报告
 
-更新时间：2026-06-01
+更新时间：2026-06-02
 
 状态：工作稿
 
@@ -20,8 +20,17 @@ token。本文档面向内部技术报告和后续论文草稿沉淀，重点记
    又各有工程成本。
 1. 代码 RL 场景尤其值得做。相比数学，代码任务有可验证 reward、单测粒度诊断、执行失败类型，天然适合研究“哪些推理 token 真正有用、哪些只是冗余自检或迷路”。
 
-当前技术判断：直接要求模型短答并不稳健。更可行的路线是“先学会长推理，再从成功长轨迹里压缩、内化、动态早停”，并用 correctness-gated
-的长度目标防止能力上限下降。
+当前技术判断：直接要求模型短答并不稳健。更可行的路线是“先学会长推理，再从成功长轨迹里压缩、内化、动态早停”。correctness-gated 长度目标仍有研究价值，但当前
+shortest-correct 实现没有达到预期：它显著压短 response_len，同时拉低 eval score，不能作为下一阶段的默认优先路线。
+
+2026-06-02 追加结论：
+
+- BigMath 0.5B 16k 系列中，`shortest_correct_reward` 的 `alpha=0.05` 已经把 eval 平均长度从约 7.3k 压到约
+  3.8k，但 macro eval reward 从约 0.445 降到约 0.379。
+- `alpha=0.2` 呈现更强剂量效应，eval 平均长度降到约 1.5k，macro eval reward 降到约 0.299。
+- 分数下降主要发生在更吃推理预算的 AIME / HMMT 集合上，说明该方案更像是在压掉必要推理，而不是删除冗余 token。
+- 下一步不应继续沿用当前 shortest 配置做简单 alpha sweep，而应先做 overlong baseline
+  完整分析、长度分桶诊断，再重设计更弱、更晚激活的长度信号。
 
 ## 问题定义
 
@@ -81,7 +90,7 @@ CoT，但不适合作为唯一的精简策略。
 - [DAPO project page](https://dapo-sia.github.io/)
 - [AReaL DAPO documentation](https://inclusionai.github.io/AReaL/algorithms/dapo.html)
 
-### 3. Correctness-gated / shortest-correct RL 是更贴近目标的方向
+### 3. Correctness-gated / shortest-correct RL 有价值，但初版实现失败
 
 ShorterBetter 提出 Sample Optimal Length（SOL）：对同一问题采样多个输出，找到最短正确响应长度，并用它作为动态长度信号。其报告在
 in-domain / out-of-domain reasoning 上减少 50%-80% 输出长度，同时维持准确率。
@@ -91,6 +100,9 @@ in-domain / out-of-domain reasoning 上减少 50%-80% 输出长度，同时维�
 - 每个 prompt 本来就有 group rollouts。
 - 只有 group 内存在正确样本时，长度信号才有意义。
 - 可以把“最短正确样本”作为同组 baseline，而不是使用全局固定长度阈值。
+
+但最新实验显示，直接把 group 内最短正确样本作为强相对目标并不稳健。我们的初版 shortest-correct 会持续奖励同题中最短正确解，使模型把 target
+length 推到几百 token 量级；数学难题 eval 上，这会伤害必要推理并降低正确率。因此，该方向需要重设计保护条件，而不是继续作为首选方案。
 
 来源：
 
@@ -229,9 +241,9 @@ short-mode SFT -> correctness-gated efficient RL -> adaptive fallback
 
 ## 研究假设
 
-### H1：只对正确样本施加长度优化，能比 DAPO 静态惩罚更好保持能力
+### H1：只对正确样本施加长度优化，未必比 DAPO 静态惩罚更稳
 
-长度奖励只在 `raw_task_reward > 0` 或 group 内有正确样本时生效。错误样本不奖励短，避免“短错”。
+初始假设是：长度奖励只在 `raw_task_reward > 0` 或 group 内有正确样本时生效，错误样本不奖励短，从而避免“短错”。
 
 可能实现：
 
@@ -242,6 +254,17 @@ length_reward_i =
 ```
 
 其中 `SOL_group = min(len_j | sample j correct)`。
+
+当前证据推翻了“初版 SOL_group
+一定更稳”的乐观判断。虽然错误样本不直接被奖励短，但正确样本内部的相对长度竞争会把模型推向越来越短的正确轨迹；当训练题存在短解或偶然短对样本时，困难 eval
+所需的长推理会被一起压掉。
+
+修正后的假设：
+
+```text
+长度优化必须同时满足 correctness-gated、difficulty-aware、late-stage、lower-bound
+约束，才能比 DAPO 式安全阈值惩罚更稳。
+```
 
 ### H2：先长后短优于从头短训
 
@@ -313,7 +336,7 @@ length_reward_i =
 
 ### 实验 2：Group-relative shortest-correct reward
 
-目的：实现 H1。
+目的：验证 H1。当前初版结果为负，不再作为默认优先路线。
 
 在 GRPO group 内计算：
 
@@ -326,6 +349,8 @@ length_reward_i =
 - DAPO static overlong
 - DAPO + shortest-correct
 - shortest-correct only
+
+当前结论：`shortest-correct only` 在 BigMath 0.5B 16k 上显著降低长度，但同步降低 eval score。后续只应尝试带更强保护的变体。
 
 ### 实验 3：成功轨迹压缩 SFT
 
@@ -375,13 +400,19 @@ length_reward_i =
 ## 阶段计划
 
 1. 保持当前 DAPO overlong penalty，只用于防止接近 `max_new_tokens` 的 runaway。
-1. 补齐并检查指标：`raw_task_reward`、`overlong_penalty`、`response_len`、`finish_reason/length`。
+1. 暂停当前 shortest-correct 配置，不再把 `alpha=0.05` 作为优先实验。
+1. 补齐并检查 overlong baseline
+   指标：`raw_task_reward`、`overlong_penalty`、`response_len`、`finish_reason/length`。
 1. 在当前训练日志上做长度分桶分析：
    - reward vs response_len
    - correct rate vs response_len bucket
    - code failure type vs response_len bucket
-1. 实现 group-relative shortest-correct reward，先只在数学任务上 A/B，再迁移到 code。
-1. 收集一批成功长轨迹，做压缩 SFT 的数据构造试验。
+1. 重设计 shortest-correct，仅保留为弱约束 / 后期约束：
+   - `alpha=0.005/0.01`
+   - `max_penalty=0.05/0.1`
+   - `min_correct=8/12`
+   - `min_shortest_len=4096/8192`
+1. 收集一批成功长轨迹，优先做压缩 SFT 的数据构造试验。
 
 ## 风险与开放问题
 
@@ -440,18 +471,18 @@ length_reward_i =
 | Overlong penalty 分解指标 | 已落地                 | 观测 DAPO 长度惩罚对总 reward 的贡献           | `areal/trainer/ppo/actor.py`, `areal/trainer/ppo/actor_qun_team.py` | L1       |
 | 正确 / 错误样本长度统计   | 已落地                 | 判断长度下降是否发生在正确样本上               | `correct_seq_len`, `incorrect_seq_len`                              | L1       |
 | rollout 停止原因统计      | 已落地                 | 识别是否仍存在 max length 截断                 | `areal/workflow/rlvr.py`, `areal/workflow/rlvr_qun_team.py`         | L1       |
-| shortest-correct reward   | 已实现，待完整训练验证 | 只对正确样本做 group-relative 长度优化         | `areal/utils/functional/functional.py`                              | L1       |
-| shortest-correct 运行参数 | 已接入                 | 支持训练脚本直接配置 alpha / group size 等变量 | `examples/*/grpo_template*.yaml`, `run_trainer_mtp.sh`              | L1       |
+| shortest-correct reward   | 已实现，初版训练负结果 | 只对正确样本做 group-relative 长度优化         | `areal/utils/functional/functional.py`                              | L3       |
+| shortest-correct 运行参数 | 已接入，需重调保护参数 | 支持训练脚本直接配置 alpha / group size 等变量 | `examples/*/grpo_template*.yaml`, `run_trainer_mtp.sh`              | L3       |
 
 ### 实验矩阵
 
-| 编号 | 研究问题                                                     | 当前状态                       | 关键变量                                                       | 主指标                                                                                       | 成功判据                                              | 证据等级 |
-| ---- | ------------------------------------------------------------ | ------------------------------ | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------- | -------- |
-| E0   | DAPO overlong penalty 能否抑制 runaway long CoT 且不伤正确率 | 已有单次训练观察，待补完整曲线 | `overlong_tokens`, `overlong_penalty_factor`, `max_new_tokens` | `raw_task_reward`, `overlong_penalty`, `response_len`, `finish_reason/length`                | `finish_reason/length` 下降，`raw_task_reward` 不下降 | L2       |
-| E1   | 当前观测面能否解释 reward 上升来源                           | 已落地                         | 指标完整性                                                     | `raw_task_reward`, `task_reward`, `overlong_penalty`, `correct_seq_len`, `incorrect_seq_len` | 能区分 correctness gain 与 penalty gain               | L1       |
-| E2   | shortest-correct reward 是否按预期只惩罚正确长样本           | 单元测试通过，待训练验证       | `alpha`, `reward_threshold`, `min_correct`, `max_penalty`      | `shortest_correct_penalty`, `shortest_correct_active`, `shortest_correct_target_len`         | 错误样本 penalty 为 0，正确长样本 penalty 符合公式    | L1       |
-| E3   | shortest-correct 的有效 alpha 区间是多少                     | 待执行                         | `alpha=0.03/0.05/0.1`                                          | `raw_task_reward`, `correct_seq_len`, `incorrect_seq_len`, `response_len`                    | 正确样本长度下降，`raw_task_reward` 不下降            | L0       |
-| E4   | 代码任务中应压缩 reasoning tokens 还是 total response tokens | 待执行                         | reasoning / code token 拆分方式                                | pass rate by length bucket, failure type by length bucket                                    | 找到不损害代码鲁棒性的压缩目标                        | L0       |
+| 编号 | 研究问题                                                     | 当前状态                        | 关键变量                                                       | 主指标                                                                                       | 成功判据                                              | 证据等级 |
+| ---- | ------------------------------------------------------------ | ------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------- | -------- |
+| E0   | DAPO overlong penalty 能否抑制 runaway long CoT 且不伤正确率 | 已有单次训练观察，待补完整曲线  | `overlong_tokens`, `overlong_penalty_factor`, `max_new_tokens` | `raw_task_reward`, `overlong_penalty`, `response_len`, `finish_reason/length`                | `finish_reason/length` 下降，`raw_task_reward` 不下降 | L2       |
+| E1   | 当前观测面能否解释 reward 上升来源                           | 已落地                          | 指标完整性                                                     | `raw_task_reward`, `task_reward`, `overlong_penalty`, `correct_seq_len`, `incorrect_seq_len` | 能区分 correctness gain 与 penalty gain               | L1       |
+| E2   | shortest-correct reward 是否按预期只惩罚正确长样本           | 机制通过，训练效果未达预期      | `alpha`, `reward_threshold`, `min_correct`, `max_penalty`      | `shortest_correct_penalty`, `shortest_correct_active`, `shortest_correct_target_len`         | 错误样本 penalty 为 0；但 eval 不降才可继续           | L3       |
+| E3   | shortest-correct 的有效 alpha 区间是多少                     | `0.05/0.2` 已失败，暂停简单扫描 | `alpha=0.005/0.01`，加强保护条件                               | `raw_task_reward`, `correct_seq_len`, `incorrect_seq_len`, `response_len`, eval reward       | 长度下降但 eval 不下降；否则判为压掉必要推理          | L3       |
+| E4   | 代码任务中应压缩 reasoning tokens 还是 total response tokens | 待执行                          | reasoning / code token 拆分方式                                | pass rate by length bucket, failure type by length bucket                                    | 找到不损害代码鲁棒性的压缩目标                        | L0       |
 
 ### E0：DAPO Overlong Penalty 初步观察
 
@@ -527,47 +558,70 @@ penalty_i =
 | `tests/test_shortest_correct_reward.py` | partial reward 不会被误判为正确样本        |
 | `tests/test_shortest_correct_reward.py` | 可与 overlong penalty 叠加                 |
 
-当前边界：该方法目前只有机制级验证，尚未完成完整训练 A/B，不能声称优于 DAPO baseline。
+当前边界：该方法机制级验证通过，但训练 A/B 显示初版配置不优于 DAPO baseline。它可以作为研究方向保留，但不能继续作为默认优先方案。
+
+### E3：Shortest-Correct 负结果
+
+实验问题：当前 shortest-correct 是否能在降低 response_len 的同时保持 eval score。
+
+参考实验：
+
+| trial                                                                        | 长度方案              | 关键参数                                                                  | 训练状态                                      |
+| ---------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------------------------- | --------------------------------------------- |
+| `mtp_grpo_muon_16k_groupsize_16_lr_4e-5_overlong_penalty_4k_20260530`        | DAPO overlong         | `overlong_tokens=4096`                                                    | 运行到 step 3628，未完整 10 epoch             |
+| `mtp_grpo_muon_16k_groupsize_16_lr_4e-5_shortest_correct_alpha_005_20260601` | shortest-correct only | `alpha=0.05`, `min_correct=2`, `max_penalty=0.75`, `min_shortest_len=512` | 运行到 step 1398，未完整 10 epoch             |
+| `mtp_grpo_muon_16k_groupsize_16_lr_4e-5_shortest_correct_alpha_02_20260530`  | shortest-correct only | `alpha=0.2`, `min_correct=2`, `max_penalty=0.75`, `min_shortest_len=512`  | 运行到 step 6002，日志显示 training completes |
+
+同 step 关键对比：
+
+| 实验                  | eval step | macro eval reward | macro eval len | train response_len |
+| --------------------- | --------- | ----------------- | -------------- | ------------------ |
+| 16k overlong baseline | 1327      | 0.445             | 7.3k           | 4.9k               |
+| shortest `alpha=0.05` | 1327      | 0.379             | 3.8k           | 1.4k               |
+| 16k overlong baseline | 1399      | 0.441             | 7.4k           | 5.1k               |
+| shortest `alpha=0.2`  | 1399      | 0.299             | 1.5k           | 0.82k              |
+
+alpha=0.05 在 step 1327 的分数据集对比：
+
+| dataset | 16k overlong reward / len | shortest `alpha=0.05` reward / len |
+| ------- | ------------------------- | ---------------------------------- |
+| MATH500 | 0.904 / 3.7k              | 0.851 / 1.1k                       |
+| AIME24  | 0.419 / 8.4k              | 0.379 / 4.9k                       |
+| AIME25  | 0.329 / 8.0k              | 0.242 / 4.1k                       |
+| AIME26  | 0.385 / 8.5k              | 0.275 / 4.5k                       |
+| HMMT25  | 0.190 / 7.9k              | 0.148 / 4.2k                       |
+
+机制解释：
+
+- `shortest_correct` 只惩罚正确样本，但在 group 内形成“最短正确解”相对优势。
+- 惩罚在 `reward_bias=-0.5`、`reward_scaling=10` 和 group reward norm 前加入，长度差异会进入 advantage。
+- `min_shortest_len=512` 只限制分母，不保证生成长度下界；target length 仍会被推到几百 token。
+- 数学难题需要较长推理预算，AIME / HMMT 下降更明显，说明该方法压掉了必要推理。
+
+结论：当前 shortest-correct 达到了“降长度”，但没有达到“短而不降能力”。后续不应继续简单尝试 `alpha=0.03/0.05/0.1`
+这类扫描，而应改成带强保护的弱约束。
 
 ### 下一轮实验协议
 
-优先实验：在其他参数不变的条件下启用 shortest-correct reward，并先取 `alpha=0.05`。`0.05` 是相对默认 `0.1`
-的保守减半设置，强于 `0.03`，更容易在短训练中观察趋势，同时降低长度项过强的风险。
+优先级调整：
 
-固定条件：
+| 优先级 | 实验                            | 目的                                             | 建议配置                                                                                     |
+| ------ | ------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------- |
+| P0     | 完整 overlong baseline 与 sweep | 找到只防 runaway、不伤困难题的安全阈值           | `overlong_tokens=4096/8192`, penalty factor `0.5/1.0`                                        |
+| P0     | 长度分桶分析                    | 判断哪些长度区间贡献正确率，避免盲目压短         | bucket by `response_len`, `correct_seq_len`, eval dataset                                    |
+| P1     | 弱 shortest-correct 重设计      | 验证 correctness-gated 是否仍有可用空间          | `alpha=0.005/0.01`, `max_penalty=0.05/0.1`, `min_correct=8/12`, `min_shortest_len=4096/8192` |
+| P1     | 成功长轨迹压缩 SFT              | 从成功轨迹中删除冗余表达，而不是用 RL 强行追最短 | teacher compression + verifier filtering                                                     |
+| P2     | budget-conditioned 多模式       | 简单题短答，难题保留长推理 fallback              | `<think_short>` / `<think_long>` / adaptive fallback                                         |
 
-| 类别                                       | 要求                                   |
-| ------------------------------------------ | -------------------------------------- |
-| 模型 / 数据集 / batch / `n_samples`        | 与 E0 baseline 保持一致                |
-| `max_new_tokens` / temperature / optimizer | 与 E0 baseline 保持一致                |
-| overlong penalty                           | 保持当前设置，或明确记录是否关闭       |
-| 训练步数                                   | 至少覆盖 E0 中出现长度变化的 step 区间 |
+弱 shortest-correct 的通过标准：
 
-观察指标：
-
-| 指标                       | 解释                             |
-| -------------------------- | -------------------------------- |
-| `raw_task_reward`          | 判断 correctness 是否保持        |
-| `task_reward`              | 观察最终进入 advantage 的 reward |
-| `response_len`             | 总体长度变化                     |
-| `correct_seq_len`          | 正确样本长度变化，主指标         |
-| `incorrect_seq_len`        | 检查是否出现短错倾向             |
-| `shortest_correct_active`  | 判断 group 内长度信号覆盖率      |
-| `shortest_correct_penalty` | 判断长度项量级是否合理           |
-| `finish_reason/length`     | 检查 max length 截断是否下降     |
-
-通过标准：
-
-| 标准                                                  | 判定             |
-| ----------------------------------------------------- | ---------------- |
-| `raw_task_reward` 不低于 E0 baseline                  | 能力未明显受损   |
-| `correct_seq_len` 下降                                | 正确样本变短     |
-| `incorrect_seq_len` 不异常下降                        | 未明显诱导短错   |
-| `shortest_correct_penalty` 量级小于任务 reward 主信号 | 长度项未主导训练 |
-| validation accuracy / pass rate 不下降                | 训练内收益可外推 |
-
-若 `alpha=0.05` 导致 `raw_task_reward` 或 validation 明显下降，则回退到 `alpha=0.03`；若长度指标几乎无变化且
-correctness 稳定，再考虑 `alpha=0.1` 或延长训练步数。
+| 标准                                               | 判定     |
+| -------------------------------------------------- | -------- |
+| eval macro reward 不低于 overlong baseline         | 必须满足 |
+| AIME / HMMT 不出现明显掉点                         | 必须满足 |
+| `correct_seq_len` 温和下降，而不是快速塌到 1k 以下 | 必须满足 |
+| `shortest_correct_target_len` 不持续低于 4k        | 必须满足 |
+| `grad_norm` 不随长度坍缩持续升高                   | 风险监控 |
 
 ### 报告化待补材料
 
