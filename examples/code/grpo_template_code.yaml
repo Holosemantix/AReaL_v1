@@ -94,6 +94,19 @@ actor:
     normalize_by_shortest: true
     max_penalty: 1.0
     min_shortest_len: 1
+  adaptive_length_reward:
+    enabled: false
+    alpha: 0.05
+    reward_threshold: 1.0
+    min_correct: 2
+    group_size: ${gconfig.n_samples}
+    min_solve_rate: 0.5
+    max_solve_rate: 1.0
+    target_quantile: 0.25
+    min_target_len: 2048
+    normalize_by_target: true
+    max_penalty: 0.1
+    correct_only: true
   kl_ctl: 0.0
   kl_estimator: k1
   use_sapo_loss: false

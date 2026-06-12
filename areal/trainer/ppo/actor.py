@@ -24,6 +24,7 @@ from areal.utils.data import (
 )
 from areal.utils.functional import (
     ppo_actor_loss_fn,
+    reward_adaptive_length_penalty,
     reward_overlong_penalty,
     reward_shortest_correct_penalty,
     sapo_loss_fn,
@@ -116,6 +117,9 @@ class PPOActor:
         shortest_correct_reward = getattr(config, "shortest_correct_reward", None)
         if shortest_correct_reward is not None:
             logger.info(f"  shortest_correct_reward: {shortest_correct_reward}")
+        adaptive_length_reward = getattr(config, "adaptive_length_reward", None)
+        if adaptive_length_reward is not None:
+            logger.info(f"  adaptive_length_reward: {adaptive_length_reward}")
         logger.info(f"  eps_clip: {config.eps_clip}")
         logger.info("=" * 70)
 
@@ -168,6 +172,28 @@ class PPOActor:
                 normalize_by_shortest=shortest_correct_reward.normalize_by_shortest,
                 max_penalty=shortest_correct_reward.max_penalty,
                 min_shortest_len=shortest_correct_reward.min_shortest_len,
+            )
+
+        adaptive_length_reward = getattr(self.config, "adaptive_length_reward", None)
+        if adaptive_length_reward is not None and getattr(
+            adaptive_length_reward, "enabled", False
+        ):
+            group_size = getattr(adaptive_length_reward, "group_size", None)
+            if group_size is None and self.config.reward_norm is not None:
+                group_size = self.config.reward_norm.group_size
+            data = reward_adaptive_length_penalty(
+                data,
+                group_size=group_size or 1,
+                alpha=adaptive_length_reward.alpha,
+                reward_threshold=adaptive_length_reward.reward_threshold,
+                min_correct=adaptive_length_reward.min_correct,
+                min_solve_rate=adaptive_length_reward.min_solve_rate,
+                max_solve_rate=adaptive_length_reward.max_solve_rate,
+                target_quantile=adaptive_length_reward.target_quantile,
+                min_target_len=adaptive_length_reward.min_target_len,
+                normalize_by_target=adaptive_length_reward.normalize_by_target,
+                max_penalty=adaptive_length_reward.max_penalty,
+                correct_only=adaptive_length_reward.correct_only,
             )
 
         # Reward Scaling
@@ -318,6 +344,13 @@ class PPOActor:
                 shortest_correct_active=data["shortest_correct_active"].float(),
                 shortest_correct_target_len=data["shortest_correct_target_len"].float(),
             )
+        if "adaptive_length_penalties" in data:
+            seq_stats.update(
+                adaptive_length_penalty=data["adaptive_length_penalties"].float(),
+                adaptive_length_active=data["adaptive_length_active"].float(),
+                adaptive_length_target_len=data["adaptive_length_target_len"].float(),
+                adaptive_length_solve_rate=data["adaptive_length_solve_rate"].float(),
+            )
         stats_tracker.stat(**seq_stats, denominator="n_seqs")
         scalars = dict(
             mask_no_eos_with_zero=self.config.mask_no_eos_with_zero,
@@ -350,6 +383,10 @@ class PPOActor:
             "shortest_correct_penalties",
             "shortest_correct_active",
             "shortest_correct_target_len",
+            "adaptive_length_penalties",
+            "adaptive_length_active",
+            "adaptive_length_target_len",
+            "adaptive_length_solve_rate",
         ]:
             data.pop(key, None)
         # NOTE: calling engine.train() is critical to enabling gradient checkpointing

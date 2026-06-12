@@ -571,6 +571,113 @@ def reward_shortest_correct_penalty(
     return data
 
 
+def reward_adaptive_length_penalty(
+    data: dict[str, Any],
+    group_size: int,
+    alpha: float,
+    reward_threshold: float = 1.0,
+    min_correct: int = 1,
+    min_solve_rate: float = 0.5,
+    max_solve_rate: float = 1.0,
+    target_quantile: float = 0.25,
+    min_target_len: int = 1,
+    normalize_by_target: bool = True,
+    max_penalty: float | None = None,
+    correct_only: bool = True,
+) -> dict[str, Any]:
+    """Difficulty-aware length penalty scaled by group solve rate.
+
+    Easy groups receive stronger length pressure. Hard groups below
+    ``min_solve_rate`` receive no length penalty, preserving reasoning budget.
+    The target length is a correct-sample length quantile instead of the minimum
+    correct length, avoiding the collapse mode seen with shortest-correct rewards.
+    """
+    reward_score = data["rewards"]
+    penalties = torch.zeros_like(reward_score)
+    zeros = torch.zeros_like(reward_score)
+
+    if group_size <= 1 or alpha <= 0 or reward_score.numel() == 0:
+        data["adaptive_length_penalties"] = penalties
+        data["adaptive_length_active"] = zeros
+        data["adaptive_length_target_len"] = zeros
+        data["adaptive_length_solve_rate"] = zeros
+        return data
+
+    target_quantile = min(max(target_quantile, 0.0), 1.0)
+    raw_rewards = data.get("raw_task_rewards", reward_score).to(dtype=reward_score.dtype)
+    response_lengths = data["loss_mask"].sum(dim=-1).to(dtype=reward_score.dtype)
+
+    bs = reward_score.shape[0]
+    padded_bs = ((bs + group_size - 1) // group_size) * group_size
+    pad = padded_bs - bs
+
+    valid = torch.ones_like(reward_score, dtype=torch.bool)
+    if pad:
+        raw_rewards = F.pad(raw_rewards, (0, pad), value=float("-inf"))
+        response_lengths = F.pad(response_lengths, (0, pad), value=0.0)
+        valid = F.pad(valid, (0, pad), value=False)
+
+    group_rewards = raw_rewards.view(-1, group_size)
+    group_lengths = response_lengths.view(-1, group_size)
+    group_valid = valid.view(-1, group_size)
+
+    correct = (group_rewards >= reward_threshold) & group_valid
+    correct_count = correct.sum(dim=-1, keepdim=True)
+    valid_count = group_valid.sum(dim=-1, keepdim=True).clamp(min=1)
+    solve_rate = correct_count.to(dtype=reward_score.dtype) / valid_count.to(
+        dtype=reward_score.dtype
+    )
+
+    active_group = (correct_count >= min_correct) & (solve_rate >= min_solve_rate)
+    if max_solve_rate > min_solve_rate:
+        solve_scale = (
+            (solve_rate - min_solve_rate) / (max_solve_rate - min_solve_rate)
+        ).clamp(min=0.0, max=1.0)
+    else:
+        solve_scale = (solve_rate >= min_solve_rate).to(dtype=reward_score.dtype)
+
+    inf_lengths = torch.full_like(group_lengths, float("inf"))
+    correct_lengths = torch.where(correct, group_lengths, inf_lengths)
+    sorted_correct_lengths = correct_lengths.sort(dim=-1).values
+    target_index = torch.floor(
+        (correct_count.to(dtype=reward_score.dtype) - 1.0).clamp(min=0.0)
+        * target_quantile
+    ).to(dtype=torch.long)
+    target_len = sorted_correct_lengths.gather(dim=-1, index=target_index)
+    target_len = target_len.clamp(min=float(min_target_len))
+
+    sample_mask = correct if correct_only else group_valid
+    active = sample_mask & active_group
+    excess = (group_lengths - target_len).clamp(min=0.0)
+    denominator = target_len if normalize_by_target else 1.0
+    group_penalties = -alpha * solve_scale * excess / denominator
+    group_penalties = torch.where(
+        active, group_penalties, torch.zeros_like(group_penalties)
+    )
+    if max_penalty is not None and max_penalty > 0:
+        group_penalties = group_penalties.clamp(min=-max_penalty)
+
+    penalties = group_penalties.reshape(-1)[:bs]
+    active_values = active.to(dtype=reward_score.dtype).reshape(-1)[:bs]
+    target_values = torch.where(
+        active_group.expand_as(group_lengths),
+        target_len.expand_as(group_lengths),
+        torch.zeros_like(group_lengths),
+    ).reshape(-1)[:bs]
+    solve_rate_values = torch.where(
+        group_valid,
+        solve_rate.expand_as(group_lengths),
+        torch.zeros_like(group_lengths),
+    ).reshape(-1)[:bs]
+
+    data["adaptive_length_penalties"] = penalties
+    data["adaptive_length_active"] = active_values
+    data["adaptive_length_target_len"] = target_values
+    data["adaptive_length_solve_rate"] = solve_rate_values
+    data["rewards"] = reward_score + penalties
+    return data
+
+
 # =============================================================================
 # New Functions for Decomposed IG / PRM Reward Calculation
 # =============================================================================

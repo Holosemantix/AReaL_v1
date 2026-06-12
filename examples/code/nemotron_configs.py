@@ -53,9 +53,30 @@ class ShortestCorrectRewardConfig:
 
 
 @dataclass
+class AdaptiveLengthRewardConfig:
+    """Group solve-rate adaptive length penalty for code rollouts."""
+
+    enabled: bool = field(default=False)
+    alpha: float = field(default=0.05)
+    reward_threshold: float = field(default=1.0)
+    min_correct: int = field(default=2)
+    group_size: int | None = field(default=None)
+    min_solve_rate: float = field(default=0.5)
+    max_solve_rate: float = field(default=1.0)
+    target_quantile: float = field(default=0.25)
+    min_target_len: int = field(default=2048)
+    normalize_by_target: bool = field(default=True)
+    max_penalty: float | None = field(default=0.1)
+    correct_only: bool = field(default=True)
+
+
+@dataclass
 class CodePPOActorConfig(InfoGainPPOActorConfig):
     shortest_correct_reward: ShortestCorrectRewardConfig = field(
         default_factory=ShortestCorrectRewardConfig
+    )
+    adaptive_length_reward: AdaptiveLengthRewardConfig = field(
+        default_factory=AdaptiveLengthRewardConfig
     )
 
 
