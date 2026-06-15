@@ -37,6 +37,9 @@ add_override() {
     fi
 }
 
+# 兼容旧任务里使用的 singular enable 环境变量名。
+actor_adaptive_length_reward_enabled="${actor_adaptive_length_reward_enabled:-${actor_adaptive_length_reward_enable:-}}"
+
 # 依次处理所有可选参数
 add_override "experiment_name" "${experiment_name}"
 add_override "trial_name" "${trial_name}"
@@ -85,6 +88,7 @@ add_override "actor.shortest_correct_reward.normalize_by_shortest" "${actor_shor
 add_override "actor.shortest_correct_reward.max_penalty" "${actor_shortest_correct_reward_max_penalty}"
 add_override "actor.shortest_correct_reward.min_shortest_len" "${actor_shortest_correct_reward_min_shortest_len}"
 add_override "actor.adaptive_length_reward.enabled" "${actor_adaptive_length_reward_enabled}"
+add_override "actor.adaptive_length_reward.mode" "${actor_adaptive_length_reward_mode}"
 add_override "actor.adaptive_length_reward.alpha" "${actor_adaptive_length_reward_alpha}"
 add_override "actor.adaptive_length_reward.reward_threshold" "${actor_adaptive_length_reward_reward_threshold}"
 add_override "actor.adaptive_length_reward.min_correct" "${actor_adaptive_length_reward_min_correct}"
@@ -96,6 +100,7 @@ add_override "actor.adaptive_length_reward.min_target_len" "${actor_adaptive_len
 add_override "actor.adaptive_length_reward.normalize_by_target" "${actor_adaptive_length_reward_normalize_by_target}"
 add_override "actor.adaptive_length_reward.max_penalty" "${actor_adaptive_length_reward_max_penalty}"
 add_override "actor.adaptive_length_reward.correct_only" "${actor_adaptive_length_reward_correct_only}"
+add_override "actor.adaptive_length_reward.length_normalizer" "${actor_adaptive_length_reward_length_normalizer}"
 add_override "actor.mb_spec.max_tokens_per_mb" "${actor_mb_spec_max_tokens_per_mb}"
 add_override "actor.reward_norm.denominator" "${actor_reward_norm_denominator}"
 add_override "actor.ig_reward_params.compute_backend" "${actor_ig_reward_params_compute_backend}"

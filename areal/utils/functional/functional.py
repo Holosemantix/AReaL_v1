@@ -571,42 +571,12 @@ def reward_shortest_correct_penalty(
     return data
 
 
-def reward_adaptive_length_penalty(
-    data: dict[str, Any],
+def _group_adaptive_length_inputs(
+    reward_score: torch.Tensor,
+    raw_rewards: torch.Tensor,
+    response_lengths: torch.Tensor,
     group_size: int,
-    alpha: float,
-    reward_threshold: float = 1.0,
-    min_correct: int = 1,
-    min_solve_rate: float = 0.5,
-    max_solve_rate: float = 1.0,
-    target_quantile: float = 0.25,
-    min_target_len: int = 1,
-    normalize_by_target: bool = True,
-    max_penalty: float | None = None,
-    correct_only: bool = True,
-) -> dict[str, Any]:
-    """Difficulty-aware length penalty scaled by group solve rate.
-
-    Easy groups receive stronger length pressure. Hard groups below
-    ``min_solve_rate`` receive no length penalty, preserving reasoning budget.
-    The target length is a correct-sample length quantile instead of the minimum
-    correct length, avoiding the collapse mode seen with shortest-correct rewards.
-    """
-    reward_score = data["rewards"]
-    penalties = torch.zeros_like(reward_score)
-    zeros = torch.zeros_like(reward_score)
-
-    if group_size <= 1 or alpha <= 0 or reward_score.numel() == 0:
-        data["adaptive_length_penalties"] = penalties
-        data["adaptive_length_active"] = zeros
-        data["adaptive_length_target_len"] = zeros
-        data["adaptive_length_solve_rate"] = zeros
-        return data
-
-    target_quantile = min(max(target_quantile, 0.0), 1.0)
-    raw_rewards = data.get("raw_task_rewards", reward_score).to(dtype=reward_score.dtype)
-    response_lengths = data["loss_mask"].sum(dim=-1).to(dtype=reward_score.dtype)
-
+) -> tuple[int, torch.Tensor, torch.Tensor, torch.Tensor]:
     bs = reward_score.shape[0]
     padded_bs = ((bs + group_size - 1) // group_size) * group_size
     pad = padded_bs - bs
@@ -617,30 +587,43 @@ def reward_adaptive_length_penalty(
         response_lengths = F.pad(response_lengths, (0, pad), value=0.0)
         valid = F.pad(valid, (0, pad), value=False)
 
-    group_rewards = raw_rewards.view(-1, group_size)
-    group_lengths = response_lengths.view(-1, group_size)
-    group_valid = valid.view(-1, group_size)
-
-    correct = (group_rewards >= reward_threshold) & group_valid
-    correct_count = correct.sum(dim=-1, keepdim=True)
-    valid_count = group_valid.sum(dim=-1, keepdim=True).clamp(min=1)
-    solve_rate = correct_count.to(dtype=reward_score.dtype) / valid_count.to(
-        dtype=reward_score.dtype
+    return (
+        bs,
+        raw_rewards.view(-1, group_size),
+        response_lengths.view(-1, group_size),
+        valid.view(-1, group_size),
     )
 
+
+def _target_adaptive_length_penalty(
+    group_lengths: torch.Tensor,
+    group_valid: torch.Tensor,
+    correct: torch.Tensor,
+    correct_count: torch.Tensor,
+    solve_rate: torch.Tensor,
+    reward_dtype: torch.dtype,
+    alpha: float,
+    min_correct: int,
+    min_solve_rate: float,
+    max_solve_rate: float,
+    target_quantile: float,
+    min_target_len: int,
+    normalize_by_target: bool,
+    correct_only: bool,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     active_group = (correct_count >= min_correct) & (solve_rate >= min_solve_rate)
     if max_solve_rate > min_solve_rate:
         solve_scale = (
             (solve_rate - min_solve_rate) / (max_solve_rate - min_solve_rate)
         ).clamp(min=0.0, max=1.0)
     else:
-        solve_scale = (solve_rate >= min_solve_rate).to(dtype=reward_score.dtype)
+        solve_scale = (solve_rate >= min_solve_rate).to(dtype=reward_dtype)
 
     inf_lengths = torch.full_like(group_lengths, float("inf"))
     correct_lengths = torch.where(correct, group_lengths, inf_lengths)
     sorted_correct_lengths = correct_lengths.sort(dim=-1).values
     target_index = torch.floor(
-        (correct_count.to(dtype=reward_score.dtype) - 1.0).clamp(min=0.0)
+        (correct_count.to(dtype=reward_dtype) - 1.0).clamp(min=0.0)
         * target_quantile
     ).to(dtype=torch.long)
     target_len = sorted_correct_lengths.gather(dim=-1, index=target_index)
@@ -654,28 +637,184 @@ def reward_adaptive_length_penalty(
     group_penalties = torch.where(
         active, group_penalties, torch.zeros_like(group_penalties)
     )
+    target_values = torch.where(
+        active_group.expand_as(group_lengths),
+        target_len.expand_as(group_lengths),
+        torch.zeros_like(group_lengths),
+    )
+    return group_penalties, active, target_values
+
+
+def _alp_adaptive_length_penalty(
+    group_lengths: torch.Tensor,
+    group_valid: torch.Tensor,
+    solve_rate: torch.Tensor,
+    response_lengths: torch.Tensor,
+    group_size: int,
+    alpha: float,
+    length_normalizer: int | float | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    scale_floor = torch.full_like(solve_rate, 1.0 / float(group_size))
+    solve_scale = solve_rate.clamp(min=scale_floor)
+    normalizer_value = length_normalizer
+    if normalizer_value is None:
+        normalizer_value = response_lengths.max().clamp(min=1.0).item()
+    normalizer = torch.as_tensor(
+        max(float(normalizer_value), 1.0),
+        dtype=group_lengths.dtype,
+        device=group_lengths.device,
+    )
+
+    active = group_valid
+    group_penalties = -alpha * solve_scale * group_lengths / normalizer
+    group_penalties = torch.where(
+        active, group_penalties, torch.zeros_like(group_penalties)
+    )
+    target_values = torch.where(
+        group_valid,
+        normalizer.expand_as(group_lengths),
+        torch.zeros_like(group_lengths),
+    )
+    return group_penalties, active, target_values
+
+
+def _compute_adaptive_length_groups(
+    data: dict[str, Any],
+    group_size: int,
+    alpha: float,
+    reward_threshold: float,
+    min_correct: int,
+    min_solve_rate: float,
+    max_solve_rate: float,
+    target_quantile: float,
+    min_target_len: int,
+    normalize_by_target: bool,
+    max_penalty: float | None,
+    correct_only: bool,
+    mode: str,
+    length_normalizer: int | float | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    reward_score = data["rewards"]
+    raw_rewards = data.get("raw_task_rewards", reward_score).to(dtype=reward_score.dtype)
+    response_lengths = data["loss_mask"].sum(dim=-1).to(dtype=reward_score.dtype)
+    bs, group_rewards, group_lengths, group_valid = _group_adaptive_length_inputs(
+        reward_score, raw_rewards, response_lengths, group_size
+    )
+
+    correct = (group_rewards >= reward_threshold) & group_valid
+    correct_count = correct.sum(dim=-1, keepdim=True)
+    valid_count = group_valid.sum(dim=-1, keepdim=True).clamp(min=1)
+    solve_rate = correct_count.to(dtype=reward_score.dtype) / valid_count.to(
+        dtype=reward_score.dtype
+    )
+
+    if mode == "target":
+        group_penalties, active, target_values = _target_adaptive_length_penalty(
+            group_lengths,
+            group_valid,
+            correct,
+            correct_count,
+            solve_rate,
+            reward_score.dtype,
+            alpha,
+            min_correct,
+            min_solve_rate,
+            max_solve_rate,
+            min(max(target_quantile, 0.0), 1.0),
+            min_target_len,
+            normalize_by_target,
+            correct_only,
+        )
+    else:
+        group_penalties, active, target_values = _alp_adaptive_length_penalty(
+            group_lengths,
+            group_valid,
+            solve_rate,
+            response_lengths,
+            group_size,
+            alpha,
+            length_normalizer,
+        )
+
     if max_penalty is not None and max_penalty > 0:
         group_penalties = group_penalties.clamp(min=-max_penalty)
 
     penalties = group_penalties.reshape(-1)[:bs]
     active_values = active.to(dtype=reward_score.dtype).reshape(-1)[:bs]
-    target_values = torch.where(
-        active_group.expand_as(group_lengths),
-        target_len.expand_as(group_lengths),
-        torch.zeros_like(group_lengths),
-    ).reshape(-1)[:bs]
+    target_values = target_values.reshape(-1)[:bs]
     solve_rate_values = torch.where(
         group_valid,
         solve_rate.expand_as(group_lengths),
         torch.zeros_like(group_lengths),
     ).reshape(-1)[:bs]
+    return penalties, active_values, target_values, solve_rate_values
 
+
+def _store_adaptive_length_outputs(
+    data: dict[str, Any],
+    reward_score: torch.Tensor,
+    penalties: torch.Tensor,
+    active: torch.Tensor,
+    target_len: torch.Tensor,
+    solve_rate: torch.Tensor,
+) -> dict[str, Any]:
     data["adaptive_length_penalties"] = penalties
-    data["adaptive_length_active"] = active_values
-    data["adaptive_length_target_len"] = target_values
-    data["adaptive_length_solve_rate"] = solve_rate_values
+    data["adaptive_length_active"] = active
+    data["adaptive_length_target_len"] = target_len
+    data["adaptive_length_solve_rate"] = solve_rate
     data["rewards"] = reward_score + penalties
     return data
+
+
+def reward_adaptive_length_penalty(
+    data: dict[str, Any],
+    group_size: int,
+    alpha: float,
+    reward_threshold: float = 1.0,
+    min_correct: int = 1,
+    min_solve_rate: float = 0.5,
+    max_solve_rate: float = 1.0,
+    target_quantile: float = 0.25,
+    min_target_len: int = 1,
+    normalize_by_target: bool = True,
+    max_penalty: float | None = None,
+    correct_only: bool = True,
+    mode: str = "target",
+    length_normalizer: int | float | None = None,
+) -> dict[str, Any]:
+    """Apply target-quantile or ALP-style adaptive length reward penalties."""
+    reward_score = data["rewards"]
+    zeros = torch.zeros_like(reward_score)
+    mode = mode.lower()
+
+    if group_size <= 1 or alpha <= 0 or reward_score.numel() == 0:
+        return _store_adaptive_length_outputs(
+            data, reward_score, zeros, zeros, zeros, zeros
+        )
+    if mode not in ("target", "alp"):
+        raise ValueError(
+            f"Unknown adaptive length reward mode {mode!r}; expected 'target' or 'alp'."
+        )
+
+    penalties, active, target_len, solve_rate = _compute_adaptive_length_groups(
+        data,
+        group_size,
+        alpha,
+        reward_threshold,
+        min_correct,
+        min_solve_rate,
+        max_solve_rate,
+        target_quantile,
+        min_target_len,
+        normalize_by_target,
+        max_penalty,
+        correct_only,
+        mode,
+        length_normalizer,
+    )
+    return _store_adaptive_length_outputs(
+        data, reward_score, penalties, active, target_len, solve_rate
+    )
 
 
 # =============================================================================
@@ -867,7 +1006,8 @@ def assign_ig_rewards(
         gt_len = info.get("gt_len", 1)
         prompt_len = info.get("prompt_len", 0)
 
-        if num == 0: continue
+        if num == 0:
+            continue
         if start_idx + num > len(all_log_prob_sums):
             logger.error(f"[IG-Error] Missing logprobs for sample {sample_idx}")
             continue
@@ -922,8 +1062,10 @@ def _prepare_single_sample_probes(
         min_step_tokens: int = 5,
         max_step_tokens: int = 128  # [新增] 防止 Qwen BPE 粘连导致的无节制膨胀
 ):
-    if input_ids.dim() == 1: input_ids = input_ids.unsqueeze(0)
-    if ig_gt_ids.dim() == 1: ig_gt_ids = ig_gt_ids.unsqueeze(0)
+    if input_ids.dim() == 1:
+        input_ids = input_ids.unsqueeze(0)
+    if ig_gt_ids.dim() == 1:
+        ig_gt_ids = ig_gt_ids.unsqueeze(0)
 
     q_tensor = input_ids[:, :prompt_len]
     reasoning_ids = input_ids[:, prompt_len:]

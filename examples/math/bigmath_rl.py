@@ -69,6 +69,7 @@ class AdaptiveLengthRewardConfig:
     """Group solve-rate adaptive length penalty for math rollouts."""
 
     enabled: bool = field(default=False)
+    mode: str = field(default="target")
     alpha: float = field(default=0.05)
     reward_threshold: float = field(default=1.0)
     min_correct: int = field(default=2)
@@ -80,6 +81,7 @@ class AdaptiveLengthRewardConfig:
     normalize_by_target: bool = field(default=True)
     max_penalty: float | None = field(default=0.1)
     correct_only: bool = field(default=True)
+    length_normalizer: int | None = field(default=None)
 
 
 @dataclass
