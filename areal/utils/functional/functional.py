@@ -708,7 +708,7 @@ def _compute_adaptive_length_groups(
         dtype=reward_score.dtype
     )
 
-    if mode == "target":
+    if mode == "correct_length_quantile":
         group_penalties, active, target_values = _target_adaptive_length_penalty(
             group_lengths,
             group_valid,
@@ -750,6 +750,13 @@ def _compute_adaptive_length_groups(
     return penalties, active_values, target_values, solve_rate_values
 
 
+def _normalize_adaptive_length_mode(mode: str) -> str:
+    mode = mode.lower()
+    if mode == "target":
+        return "correct_length_quantile"
+    return mode
+
+
 def _store_adaptive_length_outputs(
     data: dict[str, Any],
     reward_score: torch.Tensor,
@@ -779,21 +786,22 @@ def reward_adaptive_length_penalty(
     normalize_by_target: bool = True,
     max_penalty: float | None = None,
     correct_only: bool = True,
-    mode: str = "target",
+    mode: str = "correct_length_quantile",
     length_normalizer: int | float | None = None,
 ) -> dict[str, Any]:
-    """Apply target-quantile or ALP-style adaptive length reward penalties."""
+    """Apply correct-length-quantile or ALP-style adaptive length penalties."""
     reward_score = data["rewards"]
     zeros = torch.zeros_like(reward_score)
-    mode = mode.lower()
+    mode = _normalize_adaptive_length_mode(mode)
 
     if group_size <= 1 or alpha <= 0 or reward_score.numel() == 0:
         return _store_adaptive_length_outputs(
             data, reward_score, zeros, zeros, zeros, zeros
         )
-    if mode not in ("target", "alp"):
+    if mode not in ("correct_length_quantile", "alp"):
         raise ValueError(
-            f"Unknown adaptive length reward mode {mode!r}; expected 'target' or 'alp'."
+            f"Unknown adaptive length reward mode {mode!r}; expected "
+            "'correct_length_quantile' or 'alp' ('target' is a legacy alias)."
         )
 
     penalties, active, target_len, solve_rate = _compute_adaptive_length_groups(
