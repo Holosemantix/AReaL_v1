@@ -416,7 +416,7 @@ class PPOActor:
                 max_penalty=adaptive_length_reward.max_penalty,
                 correct_only=adaptive_length_reward.correct_only,
                 mode=getattr(
-                    adaptive_length_reward, "mode", "correct_length_quantile"
+                    adaptive_length_reward, "mode", "length_quantile"
                 ),
                 length_normalizer=getattr(
                     adaptive_length_reward,

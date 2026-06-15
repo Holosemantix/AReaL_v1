@@ -96,7 +96,7 @@ actor:
     min_shortest_len: 1
   adaptive_length_reward:
     enabled: false
-    mode: correct_length_quantile
+    mode: length_quantile
     alpha: 0.05
     reward_threshold: 1.0
     min_correct: 2

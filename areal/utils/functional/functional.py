@@ -708,7 +708,7 @@ def _compute_adaptive_length_groups(
         dtype=reward_score.dtype
     )
 
-    if mode == "correct_length_quantile":
+    if mode == "length_quantile":
         group_penalties, active, target_values = _target_adaptive_length_penalty(
             group_lengths,
             group_valid,
@@ -752,8 +752,8 @@ def _compute_adaptive_length_groups(
 
 def _normalize_adaptive_length_mode(mode: str) -> str:
     mode = mode.lower()
-    if mode == "target":
-        return "correct_length_quantile"
+    if mode in ("target", "correct_length_quantile"):
+        return "length_quantile"
     return mode
 
 
@@ -786,7 +786,7 @@ def reward_adaptive_length_penalty(
     normalize_by_target: bool = True,
     max_penalty: float | None = None,
     correct_only: bool = True,
-    mode: str = "correct_length_quantile",
+    mode: str = "length_quantile",
     length_normalizer: int | float | None = None,
 ) -> dict[str, Any]:
     """Apply correct-length-quantile or ALP-style adaptive length penalties."""
@@ -798,10 +798,11 @@ def reward_adaptive_length_penalty(
         return _store_adaptive_length_outputs(
             data, reward_score, zeros, zeros, zeros, zeros
         )
-    if mode not in ("correct_length_quantile", "alp"):
+    if mode not in ("length_quantile", "alp"):
         raise ValueError(
             f"Unknown adaptive length reward mode {mode!r}; expected "
-            "'correct_length_quantile' or 'alp' ('target' is a legacy alias)."
+            "'length_quantile' or 'alp' "
+            "('target' and 'correct_length_quantile' are legacy aliases)."
         )
 
     penalties, active, target_len, solve_rate = _compute_adaptive_length_groups(

@@ -69,7 +69,7 @@ class AdaptiveLengthRewardConfig:
     """Group solve-rate adaptive length penalty for math rollouts."""
 
     enabled: bool = field(default=False)
-    mode: str = field(default="correct_length_quantile")
+    mode: str = field(default="length_quantile")
     alpha: float = field(default=0.05)
     reward_threshold: float = field(default=1.0)
     min_correct: int = field(default=2)

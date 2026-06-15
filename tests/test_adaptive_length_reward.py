@@ -131,6 +131,31 @@ def test_adaptive_length_penalty_accepts_legacy_target_alias():
     )
 
 
+def test_adaptive_length_penalty_accepts_legacy_correct_length_quantile_alias():
+    data = _batch(
+        rewards=[1.0, 1.0, 1.0, 1.0],
+        response_lengths=[4, 8, 12, 16],
+    )
+
+    out = reward_adaptive_length_penalty(
+        data,
+        group_size=4,
+        alpha=0.2,
+        reward_threshold=1.0,
+        min_correct=2,
+        min_solve_rate=0.5,
+        max_solve_rate=1.0,
+        target_quantile=0.5,
+        min_target_len=1,
+        mode="correct_length_quantile",
+        max_penalty=0.15,
+    )
+
+    torch.testing.assert_close(
+        out["adaptive_length_penalties"], torch.tensor([0.0, 0.0, -0.1, -0.15])
+    )
+
+
 def test_adaptive_length_penalty_alp_mode_uses_absolute_length_cost():
     data = _batch(
         rewards=[1.0, 0.0, 1.0, 0.0],
