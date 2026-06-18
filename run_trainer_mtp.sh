@@ -101,6 +101,7 @@ add_override "actor.adaptive_length_reward.normalize_by_target" "${actor_adaptiv
 add_override "actor.adaptive_length_reward.max_penalty" "${actor_adaptive_length_reward_max_penalty}"
 add_override "actor.adaptive_length_reward.correct_only" "${actor_adaptive_length_reward_correct_only}"
 add_override "actor.adaptive_length_reward.length_normalizer" "${actor_adaptive_length_reward_length_normalizer}"
+add_override "actor.adaptive_length_reward.alp_beta" "${actor_adaptive_length_reward_alp_beta}"
 add_override "actor.mb_spec.max_tokens_per_mb" "${actor_mb_spec_max_tokens_per_mb}"
 add_override "actor.reward_norm.denominator" "${actor_reward_norm_denominator}"
 add_override "actor.ig_reward_params.compute_backend" "${actor_ig_reward_params_compute_backend}"

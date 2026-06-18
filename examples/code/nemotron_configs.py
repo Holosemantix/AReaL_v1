@@ -70,6 +70,7 @@ class AdaptiveLengthRewardConfig:
     max_penalty: float | None = field(default=0.1)
     correct_only: bool = field(default=True)
     length_normalizer: int | None = field(default=None)
+    alp_beta: float | None = field(default=1e-7)
 
 
 @dataclass

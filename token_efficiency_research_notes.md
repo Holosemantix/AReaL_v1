@@ -1,6 +1,6 @@
 # 精简推理与 Token 效率优化技术报告
 
-更新时间：2026-06-17
+更新时间：2026-06-18
 
 状态：工作稿
 
@@ -66,6 +66,28 @@ shortest-correct 实现没有达到预期：它显著压短 response_len，同�
   response_len 约 `9.7k`，且日志中有大量 rollout timeout；它不应作为 16k token-efficiency 主线。
 - 当前主线建议：保留 `length_quantile` adaptive 作为 16k 方向，先做 checkpoint 复评和小矩阵稳健性验证；不再继续
   shortest-correct 简单 alpha sweep。
+
+2026-06-18 追加结论：
+
+- ALP / APL 术语说明：论文方法名是 ALP（Adaptive Length Penalty），实验目录中使用 `alp_reward`；本文优先写 ALP，引用历史
+  run 名或旧结论时保留 `alp` / APL。
+- ALP ablation 已有一次完整 16k 训练负结果：
+  `mtp_grpo_muon_16k_groupsize_16_lr_4e-5_alp_reward_alpha005_min4096_20260617`。
+- 该 run 配置文件中 `length_normalizer=null`，但 actor 调用时会用 `self.config.max_new_tokens` 作为
+  fallback，因此 实际 normalizer 是 `16384`。该旧实现下 `alpha=0.05` 等效 per-token `beta≈3.05e-6`，约为
+  ALP 论文报告 `beta=1e-7` 的 30 倍。因此这个 run 是“过强 ALP 长度成本”的负结果，不能直接坐实 paper-faithful ALP 失败。
+- 原文 ALP 使用 group solve rate 缩放 per-token 长度成本，不使用最短正确样本长度；这和我们之前的 shortest-correct /
+  SOL_group 方案不同。当前 APL 代码路径也不使用 `correct_only`、`min_solve_rate`、
+  `target_quantile`、`min_correct` 或 `min_target_len` 这些 length-quantile 保护条件，因此 run 名中的
+  `min4096` 对 APL 实际不起保护作用。
+- ALP 训练快速坍缩：step 0 macro reward `0.415`、eval len `11.1k`；step 399 已降到 macro
+  `0.296`、eval len `2.4k`；step 499 仅剩 macro `0.148`、eval len `416`；step 999 起 eval
+  reward 为 `0`，final step `6639` 的 eval response_len 为 `1`。
+- 训练侧也同步坍缩，`ppo_actor/response_len` 在 step `2266` 首次稳定到 `1`，last100 train raw reward 为
+  `0`。这比 shortest-correct 的过短化更严重，属于 reward objective 方向失控，而不是 checkpoint selection 问题。
+- 因此，旧参数 ALP 当前不应作为 16k token-efficiency 主线，也不应阻塞 `length_quantile` adaptive 的
+  checkpoint 复评和小矩阵验证。代码已补 `alp_beta`，后续若复跑 APL，应用 paper-scale `alp_beta=1e-7` 做短程
+  sanity check，再决定是否作为正式 ablation。
 
 ## 问题定义
 
@@ -419,7 +441,21 @@ length_reward_i =
 
 对代码任务，可用 public tests / sampled tests 失败作为 fallback 信号。
 
-### 实验 5：代码任务专门分析
+### 实验 5：ALP 消融
+
+目的：确认原版绝对长度成本是否能作为 adaptive 的简单对照。
+
+当前结果：旧 normalized-alpha APL 参数已失败，训练坍缩到 1-token 输出。该 run 配置文件中
+`length_normalizer=null`，但实际经由 actor fallback 使用 `max_new_tokens=16384`。`alpha=0.05` 等效
+per-token `beta≈3.05e-6`，明显强于论文报告的 `beta=1e-7`。后续只有在需要论文失败 ablation 或 paper-scale ALP
+对照时才继续：
+
+- 使用新增 `alp_beta=1e-7` 路径复跑短程 sanity check，避免再把 length-quantile 的 `alpha=0.05` 当成 ALP
+  系数。
+- 明确让 correctness / difficulty gate 生效，不能继续对所有有效样本无差别施加长度成本。
+- 与 `length_quantile` 分开报告，避免把 ALP 负结果误解为 adaptive 分位数目标失败。
+
+### 实验 6：代码任务专门分析
 
 统计：
 
@@ -443,7 +479,8 @@ length_reward_i =
    - code failure type vs response_len bucket
 1. 对 adaptive 做小矩阵稳健性验证，重点围绕 `alpha`、`min_solve_rate`、`target_quantile`、
    `min_target_len` 和 `max_penalty`。
-1. 原版 `mode=alp` 只作为 ablation 准备，不阻塞当前主线；它尚无完成训练结果。
+1. `mode=alp` 已有一次过强参数负结果并发生训练坍缩；该 run 等效 beta 约为论文报告值的 30 倍。代码已补 `alp_beta`，若论文需要 ALP
+   对照，应先用 paper-scale beta 做短程 sanity check，再决定是否补 gating 或作为失败消融。
 1. 收集一批成功长轨迹，优先做压缩 SFT 的数据构造试验。
 
 ## 风险与开放问题
@@ -460,6 +497,7 @@ length_reward_i =
 
 - [DeepSeek-R1](https://arxiv.org/abs/2501.12948)
 - [DAPO](https://arxiv.org/abs/2503.14476)
+- [Just Enough Thinking / ALP](https://arxiv.org/abs/2506.05256)
 - [ShorterBetter](https://arxiv.org/abs/2504.21370)
 - [Concise Reasoning via RL](https://arxiv.org/abs/2504.05185)
 - [ThinkPrune](https://arxiv.org/abs/2504.01296)
@@ -497,27 +535,28 @@ length_reward_i =
 
 ### 实现资产总览
 
-| 模块                      | 状态                    | 作用                                           | 代码 / 配置位置                                                     | 证据等级 |
-| ------------------------- | ----------------------- | ---------------------------------------------- | ------------------------------------------------------------------- | -------- |
-| 原始任务 reward 保留      | 已落地                  | 区分 correctness gain 与 penalty gain          | `areal/trainer/ppo/actor.py`, `areal/trainer/ppo/actor_qun_team.py` | L1       |
-| Overlong penalty 分解指标 | 已落地                  | 观测 DAPO 长度惩罚对总 reward 的贡献           | `areal/trainer/ppo/actor.py`, `areal/trainer/ppo/actor_qun_team.py` | L1       |
-| 正确 / 错误样本长度统计   | 已落地                  | 判断长度下降是否发生在正确样本上               | `correct_seq_len`, `incorrect_seq_len`                              | L1       |
-| rollout 停止原因统计      | 已落地                  | 识别是否仍存在 max length 截断                 | `areal/workflow/rlvr.py`, `areal/workflow/rlvr_qun_team.py`         | L1       |
-| shortest-correct reward   | 已实现，初版训练负结果  | 只对正确样本做 group-relative 长度优化         | `areal/utils/functional/functional.py`                              | L3       |
-| shortest-correct 运行参数 | 已接入，需重调保护参数  | 支持训练脚本直接配置 alpha / group size 等变量 | `examples/*/grpo_template*.yaml`, `run_trainer_mtp.sh`              | L3       |
-| adaptive length reward    | 已实现，首个 16k 正结果 | solve-rate 自适应正确样本分位数长度目标        | `areal/utils/functional/functional.py`                              | L3       |
-| 原版 ALP mode             | 已实现，尚无完成训练    | 对所有有效样本按 solve rate 与长度线性扣分     | `mode=alp`, `length_normalizer`                                     | L1       |
+| 模块                      | 状态                          | 作用                                           | 代码 / 配置位置                                                     | 证据等级 |
+| ------------------------- | ----------------------------- | ---------------------------------------------- | ------------------------------------------------------------------- | -------- |
+| 原始任务 reward 保留      | 已落地                        | 区分 correctness gain 与 penalty gain          | `areal/trainer/ppo/actor.py`, `areal/trainer/ppo/actor_qun_team.py` | L1       |
+| Overlong penalty 分解指标 | 已落地                        | 观测 DAPO 长度惩罚对总 reward 的贡献           | `areal/trainer/ppo/actor.py`, `areal/trainer/ppo/actor_qun_team.py` | L1       |
+| 正确 / 错误样本长度统计   | 已落地                        | 判断长度下降是否发生在正确样本上               | `correct_seq_len`, `incorrect_seq_len`                              | L1       |
+| rollout 停止原因统计      | 已落地                        | 识别是否仍存在 max length 截断                 | `areal/workflow/rlvr.py`, `areal/workflow/rlvr_qun_team.py`         | L1       |
+| shortest-correct reward   | 已实现，初版训练负结果        | 只对正确样本做 group-relative 长度优化         | `areal/utils/functional/functional.py`                              | L3       |
+| shortest-correct 运行参数 | 已接入，需重调保护参数        | 支持训练脚本直接配置 alpha / group size 等变量 | `examples/*/grpo_template*.yaml`, `run_trainer_mtp.sh`              | L3       |
+| adaptive length reward    | 已实现，首个 16k 正结果       | solve-rate 自适应正确样本分位数长度目标        | `areal/utils/functional/functional.py`                              | L3       |
+| ALP mode                  | 已实现，已补 paper-scale beta | 对所有有效样本按 solve rate 与长度线性扣分     | `mode=alp`, `alp_beta`, `length_normalizer`                         | L2       |
 
 ### 实验矩阵
 
-| 编号 | 研究问题                                                                   | 当前状态                                               | 关键变量                                                             | 主指标                                                                                       | 成功判据                                              | 证据等级 |
-| ---- | -------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------- | -------- |
-| E0   | DAPO overlong penalty 能否抑制 runaway long CoT 且不伤正确率               | 已有 3 组 overlong 对照，待补分桶曲线                  | `overlong_tokens`, `overlong_penalty_factor`, `max_new_tokens`       | `raw_task_reward`, `overlong_penalty`, `response_len`, `finish_reason/length`                | `finish_reason/length` 下降，`raw_task_reward` 不下降 | L2       |
-| E1   | 当前观测面能否解释 reward 上升来源                                         | 已落地                                                 | 指标完整性                                                           | `raw_task_reward`, `task_reward`, `overlong_penalty`, `correct_seq_len`, `incorrect_seq_len` | 能区分 correctness gain 与 penalty gain               | L1       |
-| E2   | shortest-correct reward 是否按预期只惩罚正确长样本                         | 机制通过，训练效果未达预期                             | `alpha`, `reward_threshold`, `min_correct`, `max_penalty`            | `shortest_correct_penalty`, `shortest_correct_active`, `shortest_correct_target_len`         | 错误样本 penalty 为 0；但 eval 不降才可继续           | L3       |
-| E3   | shortest-correct 的有效 alpha 区间是多少                                   | `0.05/0.2` 已失败，暂停简单扫描                        | `alpha=0.005/0.01`，加强保护条件                                     | `raw_task_reward`, `correct_seq_len`, `incorrect_seq_len`, `response_len`, eval reward       | 长度下降但 eval 不下降；否则判为压掉必要推理          | L3       |
-| E4   | solve-rate length-quantile adaptive penalty 能否按题目难度平衡长度与正确率 | 16k 完整训练完成，优于 16k overlong completed baseline | `min_solve_rate`, `target_quantile`, `min_target_len`, `max_penalty` | `adaptive_length_penalty`, `adaptive_length_solve_rate`, `response_len`, eval reward         | hard-set reward 基本不降且 eval len 有实质下降        | L3       |
-| E5   | 代码任务中应压缩 reasoning tokens 还是 total response tokens               | 待执行                                                 | reasoning / code token 拆分方式                                      | pass rate by length bucket, failure type by length bucket                                    | 找到不损害代码鲁棒性的压缩目标                        | L0       |
+| 编号 | 研究问题                                                                   | 当前状态                                                  | 关键变量                                                             | 主指标                                                                                       | 成功判据                                              | 证据等级 |
+| ---- | -------------------------------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------- | -------- |
+| E0   | DAPO overlong penalty 能否抑制 runaway long CoT 且不伤正确率               | 已有 3 组 overlong 对照，待补分桶曲线                     | `overlong_tokens`, `overlong_penalty_factor`, `max_new_tokens`       | `raw_task_reward`, `overlong_penalty`, `response_len`, `finish_reason/length`                | `finish_reason/length` 下降，`raw_task_reward` 不下降 | L2       |
+| E1   | 当前观测面能否解释 reward 上升来源                                         | 已落地                                                    | 指标完整性                                                           | `raw_task_reward`, `task_reward`, `overlong_penalty`, `correct_seq_len`, `incorrect_seq_len` | 能区分 correctness gain 与 penalty gain               | L1       |
+| E2   | shortest-correct reward 是否按预期只惩罚正确长样本                         | 机制通过，训练效果未达预期                                | `alpha`, `reward_threshold`, `min_correct`, `max_penalty`            | `shortest_correct_penalty`, `shortest_correct_active`, `shortest_correct_target_len`         | 错误样本 penalty 为 0；但 eval 不降才可继续           | L3       |
+| E3   | shortest-correct 的有效 alpha 区间是多少                                   | `0.05/0.2` 已失败，暂停简单扫描                           | `alpha=0.005/0.01`，加强保护条件                                     | `raw_task_reward`, `correct_seq_len`, `incorrect_seq_len`, `response_len`, eval reward       | 长度下降但 eval 不下降；否则判为压掉必要推理          | L3       |
+| E4   | solve-rate length-quantile adaptive penalty 能否按题目难度平衡长度与正确率 | 16k 完整训练完成，优于 16k overlong completed baseline    | `min_solve_rate`, `target_quantile`, `min_target_len`, `max_penalty` | `adaptive_length_penalty`, `adaptive_length_solve_rate`, `response_len`, eval reward         | hard-set reward 基本不降且 eval len 有实质下降        | L3       |
+| E5   | ALP mode 是否能作为 adaptive 对照                                          | 旧 normalized-alpha ALP 坍缩；已补 paper-scale `alp_beta` | `mode=alp`, `alp_beta`, gating                                       | eval reward, response_len, raw_task_reward, collapse step                                    | paper-scale 不坍缩且 hard reward 不低于 16k baseline  | L2       |
+| E6   | 代码任务中应压缩 reasoning tokens 还是 total response tokens               | 待执行                                                    | reasoning / code token 拆分方式                                      | pass rate by length bucket, failure type by length bucket                                    | 找到不损害代码鲁棒性的压缩目标                        | L0       |
 
 ### E0：DAPO Overlong Penalty 初步观察
 
@@ -681,13 +720,13 @@ alpha=0.05 在 step 1327 的分数据集对比：
 | P0     | adaptive checkpoint 复评               | 确认 best 附近 saved checkpoint 是否优于 final       | 优先评估 `globalstep3999`，同时保留 final；若 3999 稳定更好，将其作为当前 16k adaptive 候选模型                 |
 | P0     | 长度分桶与 tokens-per-correct 离线分析 | 解释 adaptive 为什么提升 hard reward，同时控制 token | 对 overlong8k、overlong4k、adaptive 计算 `correct_rate_by_len_bucket`、`tokens_per_correct`、`correct_len` 曲线 |
 | P1     | `length_quantile` adaptive 小矩阵      | 验证当前正结果是否稳健                               | 围绕 `alpha=0.03/0.05`、`min_solve_rate=0.5/0.75`、`target_quantile=0.25/0.5`、`min_target_len=4096/8192`       |
-| P1     | 原版 `mode=alp` ablation               | 回答是否需要原版 ALP 对照                            | `mode=alp`, `length_normalizer=16384`, `max_penalty=0.05`；只作为论文 / 报告对照，不阻塞主线                    |
+| P2     | Paper-scale `mode=alp` sanity check    | 确认 ALP 原文尺度是否仍坍缩                          | 使用 `alp_beta=1e-7`，最多先跑 0.5k-1k step；旧 `alpha=0.05` 结果只作为过强参数失败参考                         |
 | P1     | incorrect-only long penalty            | 优先剪掉“长错”而不是惩罚正确推理                     | 对错误样本超过动态阈值扣分；正确样本只保留很弱 tail penalty；观察 incorrect_len 是否下降且 hard reward 不降     |
 | P2     | 成功长轨迹压缩 SFT                     | 从成功轨迹中删除冗余表达，而不是用 RL 强行追最短     | teacher compression + verifier filtering；作为后续长到短 pipeline 的数据阶段                                    |
 | P2     | budget-conditioned 多模式              | 简单题短答，难题保留长推理 fallback                  | `<think_short>` / `<think_long>` / adaptive fallback                                                            |
 
 当前最优先推荐：不要再继续插值式 overlong sweep，也不要继续 shortest alpha sweep。先把 adaptive 的 saved
-checkpoint 复评和长度分桶补齐；如果需要论文完整性，再跑一个原版 `mode=alp` ablation。
+checkpoint 复评和长度分桶补齐；旧参数 `mode=alp` 已有坍缩负结果，除非要写失败 ablation，否则不占用主线资源。
 
 弱 shortest-correct 的重启标准：
 
@@ -724,9 +763,11 @@ penalty_i = -alpha * lambda_g * max(0, len_i - target_len_g) / target_len_g
 | YAML / launcher | `examples/*/grpo_template*.yaml`, `run_trainer_mtp.sh`                 | 支持模板与环境变量 override                                 |
 | 单元测试        | `tests/test_adaptive_length_reward.py`                                 | 验证 hard group 不激活、solve-rate scaling、quantile target |
 
-实现中还保留了原版 `mode=alp`：它不使用正确样本分位数 target，而是对所有有效样本按
-`solve_rate * len / length_normalizer` 线性扣分。日志树中尚未发现完成的 `mode=alp` 实验，因此下面结果只代表
-`length_quantile` adaptive。
+实现中还保留了 `mode=alp`：它不使用正确样本分位数 target，而是对所有有效样本按 solve rate 与长度线性扣分。 新增 `alp_beta` 后，ALP
+可以走论文 per-token beta 路径；不设置 `alp_beta` 时仍保留旧的 `alpha * len / length_normalizer`
+normalized-alpha 兼容路径。`mode=alp` 当前不读取 `correct_only`、
+`min_solve_rate`、`target_quantile` 或 `min_target_len`。因此 `mode=alp` 与 `length_quantile`
+是两类不同目标， 下面先报告 `length_quantile` 正结果，再单列 ALP 参数尺度修正。
 
 首个完成 run 配置：
 
@@ -787,14 +828,83 @@ adaptive 分数据集 final 指标：
 
 后续小矩阵建议：
 
-| 参数              | 候选                     | 目的                          |
-| ----------------- | ------------------------ | ----------------------------- |
-| `alpha`           | `0.03`, `0.05`           | 控制后期回落和长度压力        |
-| `min_solve_rate`  | `0.5`, `0.75`            | 调整 easy group 激活范围      |
-| `target_quantile` | `0.25`, `0.5`            | 控制 target 激进程度          |
-| `min_target_len`  | `4096`, `8192`           | 保护 hard-set 推理预算        |
-| `max_penalty`     | `0.03`, `0.05`, `0.1`    | 控制长度项对 advantage 影响   |
-| `mode`            | `length_quantile`, `alp` | 原版 ALP 仅作为 ablation 对照 |
+| 参数              | 候选                  | 目的                                                      |
+| ----------------- | --------------------- | --------------------------------------------------------- |
+| `alpha`           | `0.03`, `0.05`        | 控制后期回落和长度压力                                    |
+| `min_solve_rate`  | `0.5`, `0.75`         | 调整 easy group 激活范围                                  |
+| `target_quantile` | `0.25`, `0.5`         | 控制 target 激进程度                                      |
+| `min_target_len`  | `4096`, `8192`        | 保护 hard-set 推理预算                                    |
+| `max_penalty`     | `0.03`, `0.05`, `0.1` | 控制长度项对 advantage 影响                               |
+| `mode`            | `length_quantile`     | 当前主线只继续验证分位数 adaptive；ALP 已单独修正参数尺度 |
+
+### E5：ALP Mode 参数尺度修正与负结果
+
+研究问题：ALP 风格的 solve-rate-scaled 长度成本，能否作为 `length_quantile` adaptive 的简单对照，在降低 token
+的同时保持 BigMath 0.5B 16k 质量。
+
+原文核对：
+
+- ALP 原文定义的是 `p_solved(q)=correct_count/K`，并用 solve rate 缩放 per-token 长度成本；easy prompts
+  高 penalty，hard prompts 低 penalty。
+- ALP 不使用“答对采样中的最短长度”作为 target。最短正确长度更接近我们此前的 shortest-correct / SOL_group 方案，已经在
+  BigMath 16k 上出现过短化负结果。
+- 论文实验报告使用 `beta=1e-7`，训练 context window 为 16k。
+
+当前结论：旧 normalized-alpha APL 配置不能作为 paper-faithful ALP 结论。该 run 不是温和省
+token，而是快速学习到极短无效输出，eval reward 归零。
+
+日志来源：
+`dataset/ag_data/logs/areal/experiments/logs/root/ailab_slm_0_5b_think_bigmath/mtp_grpo_muon_16k_groupsize_16_lr_4e-5_alp_reward_alpha005_min4096_20260617`。
+
+实验配置：
+
+| 参数                | 取值                          | 备注                                                                    |
+| ------------------- | ----------------------------- | ----------------------------------------------------------------------- |
+| `mode`              | `alp`                         | 绝对长度成本，不使用正确样本分位数 target                               |
+| `alpha`             | `0.05`                        | 旧 normalized-alpha 路径；等效 `beta≈3.05e-6`，比论文 `1e-7` 大约 30 倍 |
+| `alp_beta`          | 未实现                        | 本次 run 没有 paper-scale beta 参数；现已补上                           |
+| `group_size`        | `16`                          | 与 GRPO group rollout 对齐                                              |
+| `max_penalty`       | `0.05`                        | 单样本长度项最大负贡献                                                  |
+| `length_normalizer` | 配置为 `null`，实际为 `16384` | actor 侧用 `max_new_tokens` 作为 fallback                               |
+| `correct_only`      | `true`                        | 在 APL 代码路径中未生效                                                 |
+| `min_solve_rate`    | `0.75`                        | 在 APL 代码路径中未生效                                                 |
+| `min_target_len`    | `4096`                        | 在 APL 代码路径中未生效；run 名中的 `min4096` 不能提供下界保护          |
+
+ALP eval 曲线：
+
+| step | macro reward | hard reward | avg eval len | hard len | 现象                 |
+| ---- | ------------ | ----------- | ------------ | -------- | -------------------- |
+| 0    | 0.415        | 0.301       | 11.1k        | 12.8k    | base checkpoint 水平 |
+| 99   | 0.406        | 0.290       | 8.9k         | 10.4k    | 已开始降质降长       |
+| 199  | 0.378        | 0.259       | 6.3k         | 7.4k     | 接近 shortest 负结果 |
+| 299  | 0.346        | 0.226       | 4.2k         | 4.9k     | hard-set 明显受损    |
+| 399  | 0.296        | 0.173       | 2.4k         | 2.8k     | 过短化加速           |
+| 499  | 0.148        | 0.036       | 416          | 447      | 基本失去推理能力     |
+| 999  | 0.000        | 0.000       | 6            | 6        | eval 全部归零        |
+| 6639 | 0.000        | 0.000       | 1            | 1        | final 完全坍缩       |
+
+分数据集 final 指标均为 `0`，`response_len=1`。训练侧在 step `2266` 首次稳定到
+`ppo_actor/response_len=1`、`raw_task_reward=0`；last100 train response_len 为 `1`，last100
+raw reward 为 `0`。
+
+机制解释：
+
+- 原文 ALP 对所有有效样本施加长度成本，错误样本也会收到“更短更好”的梯度；这和我们希望的 correctness-gated token efficiency
+  目标存在张力，但不是 shortest-correct 逻辑。
+- `min_solve_rate`、`correct_only`、`min_correct`、`min_target_len` 等保护条件在 APL code path
+  中没有参与计算，因此当前配置没有 difficulty-aware、correctness-gated 或正确样本下界保护。
+- 相比 shortest-correct，旧参数 ALP 的失败更彻底：shortest 至少保留了 0.316-0.377 final macro reward，而旧参数
+  ALP final reward 直接归零。
+- 该结果说明“过强绝对长度成本 + GRPO group advantage”会把模型推向短输出吸引子；它不能单独证明 paper-scale ALP 无效。
+
+后续处理：
+
+| 选项                               | 建议                                                          |
+| ---------------------------------- | ------------------------------------------------------------- |
+| 作为当前 16k 主线继续调参          | 不建议；主线仍应放在 `length_quantile` adaptive               |
+| 作为论文失败 ablation              | 可以保留，但必须标注为过强 normalized-alpha 参数失败          |
+| paper-scale ALP sanity check       | 建议用 `alp_beta=1e-7` 短跑 0.5k-1k step，先确认是否仍坍缩    |
+| 与 `length_quantile` adaptive 对比 | 只能在 paper-scale ALP 复跑后比较；当前失败不足以否定原文 ALP |
 
 ### 报告化待补材料
 

@@ -180,11 +180,35 @@ def test_adaptive_length_penalty_alp_mode_uses_absolute_length_cost():
     torch.testing.assert_close(
         out["adaptive_length_target_len"], torch.full((4,), 16.0)
     )
-    torch.testing.assert_close(
-        out["adaptive_length_solve_rate"], torch.full((4,), 0.5)
-    )
+    torch.testing.assert_close(out["adaptive_length_solve_rate"], torch.full((4,), 0.5))
     torch.testing.assert_close(
         out["rewards"], torch.tensor([0.975, -0.05, 0.925, -0.1])
+    )
+
+
+def test_adaptive_length_penalty_alp_mode_uses_paper_beta_when_set():
+    data = _batch(
+        rewards=[1.0, 0.0, 1.0, 0.0],
+        response_lengths=[4, 8, 12, 16],
+    )
+
+    out = reward_adaptive_length_penalty(
+        data,
+        group_size=4,
+        alpha=0.2,
+        reward_threshold=1.0,
+        mode="alp",
+        length_normalizer=16,
+        alp_beta=1e-3,
+        max_penalty=None,
+    )
+
+    torch.testing.assert_close(
+        out["adaptive_length_penalties"],
+        torch.tensor([-0.002, -0.004, -0.006, -0.008]),
+    )
+    torch.testing.assert_close(
+        out["rewards"], torch.tensor([0.998, -0.004, 0.994, -0.008])
     )
 
 

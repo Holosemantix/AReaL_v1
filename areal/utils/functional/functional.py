@@ -653,6 +653,7 @@ def _alp_adaptive_length_penalty(
     group_size: int,
     alpha: float,
     length_normalizer: int | float | None,
+    alp_beta: float | None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     scale_floor = torch.full_like(solve_rate, 1.0 / float(group_size))
     solve_scale = solve_rate.clamp(min=scale_floor)
@@ -666,7 +667,12 @@ def _alp_adaptive_length_penalty(
     )
 
     active = group_valid
-    group_penalties = -alpha * solve_scale * group_lengths / normalizer
+    # alp_beta follows the ALP paper's per-token coefficient. The alpha branch
+    # preserves the legacy normalized coefficient for older local configs.
+    if alp_beta is not None:
+        group_penalties = -alp_beta * solve_scale * group_lengths
+    else:
+        group_penalties = -alpha * solve_scale * group_lengths / normalizer
     group_penalties = torch.where(
         active, group_penalties, torch.zeros_like(group_penalties)
     )
@@ -693,6 +699,7 @@ def _compute_adaptive_length_groups(
     correct_only: bool,
     mode: str,
     length_normalizer: int | float | None,
+    alp_beta: float | None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     reward_score = data["rewards"]
     raw_rewards = data.get("raw_task_rewards", reward_score).to(dtype=reward_score.dtype)
@@ -734,6 +741,7 @@ def _compute_adaptive_length_groups(
             group_size,
             alpha,
             length_normalizer,
+            alp_beta,
         )
 
     if max_penalty is not None and max_penalty > 0:
@@ -788,6 +796,7 @@ def reward_adaptive_length_penalty(
     correct_only: bool = True,
     mode: str = "length_quantile",
     length_normalizer: int | float | None = None,
+    alp_beta: float | None = None,
 ) -> dict[str, Any]:
     """Apply correct-length-quantile or ALP-style adaptive length penalties."""
     reward_score = data["rewards"]
@@ -820,6 +829,7 @@ def reward_adaptive_length_penalty(
         correct_only,
         mode,
         length_normalizer,
+        alp_beta,
     )
     return _store_adaptive_length_outputs(
         data, reward_score, penalties, active, target_len, solve_rate

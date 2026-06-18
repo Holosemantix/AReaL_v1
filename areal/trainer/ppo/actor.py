@@ -203,6 +203,7 @@ class PPOActor:
                     None,
                 )
                 or self.config.max_new_tokens,
+                alp_beta=getattr(adaptive_length_reward, "alp_beta", None),
             )
 
         # Reward Scaling

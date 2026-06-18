@@ -109,6 +109,7 @@ actor:
     max_penalty: 0.1
     correct_only: true
     length_normalizer: null
+    alp_beta: 1.0e-7
   kl_ctl: 0.0
   kl_estimator: k1
   use_sapo_loss: false
