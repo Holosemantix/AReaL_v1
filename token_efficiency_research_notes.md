@@ -104,6 +104,20 @@ shortest-correct 实现没有达到预期：它显著压短 response_len，同�
   adaptive。
 - 下一步先讨论是否需要做更弱 beta、late schedule 或 correctness gate 的 ALP 变体；在讨论前不建议继续占用主线训练资源。
 
+2026-06-21 查重与路线图补充：
+
+- 这个方向不是无人区。`adaptive length penalty`、`concise reasoning`、`shortest-correct / SOL`、budget
+  control、 Lagrangian target length、difficulty-aware reward shaping
+  都已经有近邻工作。论文写法不能宣称“首次提出 adaptive length penalty”。
+- 目前没有检索到和我们完全一致的组合：`solve-rate gating + correct-only + correct-length quantile target + lower-bound protection`。我们的可防守创新点应聚焦在
+  **safe adaptive target construction**，而不是泛泛的“长度惩罚”。
+- 只证明 ALP 失败不够。ALP 是最近邻和一个重要失败例子，但顶会级 claim 至少还需要同协议实测 3-5 个高风险相关方法： R1-Alpha /
+  correct-only mean-std penalty、LASER-D / difficulty-aware length shaping、Leash /
+  dynamic target-length penalty、LAPO-style successful-length distribution，以及必要时的 ARLCP /
+  reflection-aware variant。
+- 路线图调整：先把相关方法拆成可复现 baselines，统一在 BigMath 0.5B 16k 协议下比较 macro reward、hard reward、eval
+  length、tokens-per-correct 和 Pareto frontier；只有我们在这些强基线下仍保持稳定优势，才推进顶会主叙事。
+
 ## 问题定义
 
 我们不只是追求短输出，而是追求 token efficiency：
@@ -264,6 +278,38 @@ metrics，并观察到许多长推理模型会在简单题上浪费 token。
 
 - [Do NOT Think That Much for 2+3=? On the Overthinking of o1-Like LLMs](https://arxiv.org/abs/2412.21187)
 - [Stop Overthinking: A Survey on Efficient Reasoning for Large Language Models](https://arxiv.org/abs/2503.16419)
+
+### 9. 近邻查重：当前方法不能只和 ALP 对比
+
+2026-06-21 检索结论：efficient reasoning + length-aware RL 正在快速拥挤。ALP
+是最近邻之一，但不是唯一需要击败的对照。下表按“撞车风险”和“是否必须同协议实测”整理。
+
+| 方法线                            | 代表工作                                                               | 核心机制                                                        | 与我们最接近处                                 | 关键差异                                                                                  | 实测优先级          |
+| --------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------- |
+| solve-rate absolute penalty       | [Just Enough Thinking / ALP](https://arxiv.org/abs/2506.05256)         | 用 group solve rate 缩放 per-token 长度成本                     | 同样使用 group solve rate 估计难度             | 不使用正确样本长度分位数 target；不 correct-only；无下界保护                              | 已测，standalone 负 |
+| correct-only length penalty       | [Training LMs to Reason Efficiently](https://arxiv.org/abs/2502.04463) | 只惩罚正确响应，并用同 prompt rollout 长度均值 / 方差归一化     | correct-gated，group-wise，容易实现            | target 是 mean/std normalization，不是 correct-length quantile；没有显式 hard lower bound | P0                  |
+| shortest-correct / SOL            | [ShorterBetter](https://arxiv.org/abs/2504.21370)                      | 多采样中最短正确响应作为 sample optimal length                  | 使用正确样本长度作为动态目标                   | target 是 min，过激；我们用 quantile + floor                                              | 已测近似版，负      |
+| difficulty-aware dynamic reward   | LASER-D / length-aware efficient reasoning 系列                        | 根据题目难度动态调节长度惩罚                                    | difficulty-aware length shaping                | 需核对难度估计和 target 构造；不一定 correct-only quantile                                | P0                  |
+| successful-length distribution    | [LAPO](https://arxiv.org/abs/2507.15758)                               | 两阶段学习 successful solution length distributions             | 从成功轨迹长度分布学习合适预算                 | 更偏两阶段 internalization / distribution guidance；不是单步 quantile reward              | P1                  |
+| target-length dual control        | [Leash](https://arxiv.org/abs/2512.21540)                              | Lagrangian / primal-dual 动态调长度 penalty，使输出接近目标长度 | 动态调 penalty 强度，优化长度-质量 tradeoff    | 需要外部 target length；不是 group correct quantile target                                | P1                  |
+| reflection-aware compression      | ARLCP / related concise-reasoning RL                                   | 同时惩罚 reflection 和 length，按复杂度调节                     | correct-response statistics + complexity-aware | 依赖 reflection token 定义；更侧重冗余反思结构                                            | P1                  |
+| segment-wise / step-wise shaping  | DSS-GRPO, SAS 等                                                       | think/answer 分段或 step-level advantage selection              | 防止压掉答案段，关注过程 token                 | 改动 RL objective 或 token 分段，不只是 reward shaping                                    | P2                  |
+| budget-conditioned / mode control | s1, Token-Budget-Aware, AdaptThink / DAST                              | 显式 budget 或思考模式控制                                      | 动态分配推理预算                               | 需要推理时控制 token 或多模式训练；不是纯 RL reward                                       | P2                  |
+| compression distillation          | C3oT, TokenSkip, CLORE 等                                              | 压缩长 CoT，再 SFT / 蒸馏                                       | 使用成功长轨迹压缩表达                         | 数据管线不同，可作为后续 stage，不是直接 baseline                                         | P2                  |
+
+查重后的定位：
+
+```text
+不要写：我们首次提出 adaptive length penalty。
+
+应该写：现有方法多使用 absolute penalty、shortest-correct target、全局 target length、
+mean/std normalization 或显式 budget control；这些方法容易在困难题上 under-think，
+或需要手动预算。我们提出 correctness-gated quantile target：用 solve rate 判断何时压缩，
+用同组正确样本长度分位数定义软 target，并用 lower bound 防止困难题推理预算坍缩。
+```
+
+因此，ALP 负结果只能支撑“absolute solve-rate penalty 在本设置下不稳”。要支撑顶会级主张，必须把上表 P0/P1
+中的若干方法在同一训练协议下重跑或实现近似复现。
 
 ## 研究空白与技术机会
 
@@ -497,6 +543,10 @@ length_reward_i =
    `min_target_len` 和 `max_penalty`。
 1. `mode=alp` 已完成过强参数与 paper-scale `alp_beta=1e-7` 两次负结果。standalone ALP
    不再占用当前主线资源；若论文需要继续讨论 ALP，应先决定是否值得补 gating / schedule / 更弱 beta 作为独立 ablation。
+1. 增加强相关方法同协议实测，优先级高于继续扩展我们自己的大矩阵。P0 baselines 包括 correct-only mean/std length
+   penalty、LASER-D / difficulty-aware shaping；P1 baselines 包括 Leash-style target-length
+   dual control、 LAPO-style successful-length distribution 和 ARLCP-style
+   reflection-aware penalty。
 1. 收集一批成功长轨迹，优先做压缩 SFT 的数据构造试验。
 
 ## 风险与开放问题
@@ -514,8 +564,16 @@ length_reward_i =
 - [DeepSeek-R1](https://arxiv.org/abs/2501.12948)
 - [DAPO](https://arxiv.org/abs/2503.14476)
 - [Just Enough Thinking / ALP](https://arxiv.org/abs/2506.05256)
+- [Learn to Reason Efficiently with Adaptive Length-based Reward Shaping / LASER-D](https://arxiv.org/abs/2505.15612)
+- [Training Language Models to Reason Efficiently](https://arxiv.org/abs/2502.04463)
 - [ShorterBetter](https://arxiv.org/abs/2504.21370)
 - [Concise Reasoning via RL](https://arxiv.org/abs/2504.05185)
+- [LAPO: Internalizing Reasoning Efficiency via Length-Adaptive Policy Optimization](https://arxiv.org/abs/2507.15758)
+- [Leash: Adaptive Length Penalty and Reward Shaping for Efficient Large Reasoning Model](https://arxiv.org/abs/2512.21540)
+- [Stop Unnecessary Reflection / ARLCP](https://arxiv.org/abs/2602.12113)
+- [Shorter Thoughts, Same Answers / DSS-GRPO](https://arxiv.org/abs/2603.07598)
+- [Stabilizing Efficient Reasoning with Step-Level Advantage Selection / SAS](https://arxiv.org/abs/2604.24003)
+- [Apriel-1.5-OpenReasoner](https://arxiv.org/abs/2604.02007)
 - [ThinkPrune](https://arxiv.org/abs/2504.01296)
 - [C3oT](https://arxiv.org/abs/2412.11664)
 - [TokenSkip](https://arxiv.org/abs/2502.12067)
@@ -573,6 +631,7 @@ length_reward_i =
 | E4   | solve-rate length-quantile adaptive penalty 能否按题目难度平衡长度与正确率 | 16k 完整训练完成，优于 16k overlong completed baseline                        | `min_solve_rate`, `target_quantile`, `min_target_len`, `max_penalty` | `adaptive_length_penalty`, `adaptive_length_solve_rate`, `response_len`, eval reward         | hard-set reward 基本不降且 eval len 有实质下降                   | L3       |
 | E5   | ALP mode 是否能作为 adaptive 对照                                          | 旧 normalized-alpha ALP 坍缩；paper-scale `alp_beta=1e-7` 严重 under-thinking | `mode=alp`, `alp_beta`, gating / schedule                            | eval reward, response_len, raw_task_reward, collapse step                                    | standalone 已判负；若继续变体，hard reward 不能低于 16k baseline | L2       |
 | E6   | 代码任务中应压缩 reasoning tokens 还是 total response tokens               | 待执行                                                                        | reasoning / code token 拆分方式                                      | pass rate by length bucket, failure type by length bucket                                    | 找到不损害代码鲁棒性的压缩目标                                   | L0       |
+| E7   | 高风险相关方法是否已能超过 `length_quantile` adaptive                      | 待执行；ALP 和 shortest 已有负结果                                            | mean/std correct penalty, LASER-D, Leash, LAPO, ARLCP                | macro reward, hard reward, eval len, tokens-per-correct, Pareto frontier                     | 至少 3 个高风险 baseline 同协议不优于我们，或明确边界条件        | L0       |
 
 ### E0：DAPO Overlong Penalty 初步观察
 
@@ -731,19 +790,78 @@ alpha=0.05 在 step 1327 的分数据集对比：
 
 优先级调整：
 
-| 优先级 | 实验                                   | 目的                                                 | 建议配置 / 判据                                                                                                 |
-| ------ | -------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| P0     | adaptive checkpoint 复评               | 确认 best 附近 saved checkpoint 是否优于 final       | 优先评估 `globalstep3999`，同时保留 final；若 3999 稳定更好，将其作为当前 16k adaptive 候选模型                 |
-| P0     | 长度分桶与 tokens-per-correct 离线分析 | 解释 adaptive 为什么提升 hard reward，同时控制 token | 对 overlong8k、overlong4k、adaptive 计算 `correct_rate_by_len_bucket`、`tokens_per_correct`、`correct_len` 曲线 |
-| P1     | `length_quantile` adaptive 小矩阵      | 验证当前正结果是否稳健                               | 围绕 `alpha=0.03/0.05`、`min_solve_rate=0.5/0.75`、`target_quantile=0.25/0.5`、`min_target_len=4096/8192`       |
-| P2     | ALP 变体是否继续讨论                   | 判断是否需要 standalone 失败之外的 ablation          | paper-scale `alp_beta=1e-7` 已完整训练且为负；若论文需要，再讨论更弱 beta、late schedule 或 correctness gate    |
-| P1     | incorrect-only long penalty            | 优先剪掉“长错”而不是惩罚正确推理                     | 对错误样本超过动态阈值扣分；正确样本只保留很弱 tail penalty；观察 incorrect_len 是否下降且 hard reward 不降     |
-| P2     | 成功长轨迹压缩 SFT                     | 从成功轨迹中删除冗余表达，而不是用 RL 强行追最短     | teacher compression + verifier filtering；作为后续长到短 pipeline 的数据阶段                                    |
-| P2     | budget-conditioned 多模式              | 简单题短答，难题保留长推理 fallback                  | `<think_short>` / `<think_long>` / adaptive fallback                                                            |
+| 优先级 | 实验                                   | 目的                                                 | 建议配置 / 判据                                                                                                  |
+| ------ | -------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| P0     | adaptive checkpoint 复评               | 确认 best 附近 saved checkpoint 是否优于 final       | 优先评估 `globalstep3999`，同时保留 final；若 3999 稳定更好，将其作为当前 16k adaptive 候选模型                  |
+| P0     | 长度分桶与 tokens-per-correct 离线分析 | 解释 adaptive 为什么提升 hard reward，同时控制 token | 对 overlong8k、overlong4k、adaptive 计算 `correct_rate_by_len_bucket`、`tokens_per_correct`、`correct_len` 曲线  |
+| P0     | correct-only mean/std baseline         | 实测 R1-Alpha / efficient reasoning 近邻方法是否更强 | 同 BigMath 0.5B 16k 协议；只惩罚正确响应，用同 prompt rollout 长度均值 / 方差归一化；必须报告 hard reward 和 TPC |
+| P0     | LASER-D / difficulty-aware baseline    | 实测 difficulty-aware length shaping 是否优于我们    | 先核对原文和开源公式；若可复现，保持同 group size / max_new_tokens / eval protocol；若不可复现，做最小忠实 proxy |
+| P1     | `length_quantile` adaptive 小矩阵      | 验证当前正结果是否稳健                               | 围绕 `alpha=0.03/0.05`、`min_solve_rate=0.5/0.75`、`target_quantile=0.25/0.5`、`min_target_len=4096/8192`        |
+| P1     | Leash-style target-length dual control | 实测动态 penalty 强度能否更稳                        | 目标长度取 overlong8k / adaptive 的 eval len 区间；用 Lagrangian 更新 penalty；判断是否牺牲 hard reward          |
+| P1     | LAPO-style successful-length baseline  | 检查 successful length distribution 叙事是否撞车     | 先从已有成功 rollouts 估计 prompt / difficulty length prior；短跑验证是否比 quantile target 稳                   |
+| P1     | ARLCP / reflection-aware proxy         | 检查反思冗余惩罚是否解释我们收益                     | 若数据有 `<think>` 或可识别 reflection pattern，则单独统计 / 惩罚重复反思；否则只作为分析项                      |
+| P2     | ALP 变体是否继续讨论                   | 判断是否需要 standalone 失败之外的 ablation          | paper-scale `alp_beta=1e-7` 已完整训练且为负；若论文需要，再讨论更弱 beta、late schedule 或 correctness gate     |
+| P1     | incorrect-only long penalty            | 优先剪掉“长错”而不是惩罚正确推理                     | 对错误样本超过动态阈值扣分；正确样本只保留很弱 tail penalty；观察 incorrect_len 是否下降且 hard reward 不降      |
+| P2     | 成功长轨迹压缩 SFT                     | 从成功轨迹中删除冗余表达，而不是用 RL 强行追最短     | teacher compression + verifier filtering；作为后续长到短 pipeline 的数据阶段                                     |
+| P2     | budget-conditioned 多模式              | 简单题短答，难题保留长推理 fallback                  | `<think_short>` / `<think_long>` / adaptive fallback                                                             |
 
 当前最优先推荐：不要再继续插值式 overlong sweep，也不要继续 shortest alpha sweep。先把 adaptive 的 saved
-checkpoint 复评和长度分桶补齐；`mode=alp` standalone 已有过强参数与 paper-scale 两次负结果，除非要写失败 ablation 或讨论
-gated / scheduled 变体，否则不占用主线资源。
+checkpoint 复评和长度分桶补齐，同时启动 P0 相关方法 baseline。`mode=alp` standalone 已有过强参数与 paper-scale
+两次负结果，除非要写失败 ablation 或讨论 gated / scheduled 变体，否则不占用主线资源。
+
+强相关 baseline 的统一协议：
+
+| 要求               | 说明                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------- |
+| 同训练基础         | `ailab_slm_0_5b_think_bigmath`、16k max_new_tokens、group size 16、相同 eval sets           |
+| 同报告口径         | macro reward、hard reward、avg eval len、hard len、tokens-per-correct、finish_reason/length |
+| 同 checkpoint 规则 | 报告 final 和 best eval step；避免只挑早停最优点而忽略后期 under-thinking                   |
+| 同失败判据         | hard reward 显著下降、eval len 坍到 1k 以下、train reward 与 eval reward 背离，都算失败信号 |
+| 实现忠实度         | 优先复现原文公式；公式不完整时标注为 proxy，不能当作正式击败相关工作的证据                  |
+
+### E7：高风险相关方法实测路线图
+
+目的：回答“是不是已有方法已经能比我们好”。ALP 只是一个失败例子，不能代表整个相关工作空间。E7 的目标不是无限扩实验，而是用最少的强对照把论文 claim 边界钉牢。
+
+阶段 A：公式核对与最小实现设计。
+
+| 方法                               | 需要核对的问题                                                    | 预期实现方式                                              |
+| ---------------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------- |
+| Training LMs to Reason Efficiently | correct-only penalty 的长度归一化、超参范围、reward 注入位置      | 复用现有 adaptive reward hook，加 `mode=correct_mean_std` |
+| LASER-D                            | step reward、dynamic schedule、difficulty-aware signal 的精确定义 | 若原文 / 代码完整，忠实复现；否则写明 proxy               |
+| Leash                              | target length、dual variable 更新频率、penalty 上下界             | 加一个轻量 dual controller，先跑短程稳定性                |
+| LAPO                               | successful-length distribution 如何估计、是否需要两阶段训练       | 先做 offline length prior，再决定是否训练                 |
+| ARLCP                              | reflection token 的识别方式、是否适配当前输出格式                 | 先做日志分析；没有稳定 reflection parser 时不直接训练     |
+
+阶段 B：P0 训练。
+
+| baseline                      | 为什么先跑                                                | 成功 / 失败判据                                                             |
+| ----------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------- |
+| correct-only mean/std penalty | 和我们的 correct-gated quantile target 最近，且实现成本低 | 若 hard reward 与我们接近且 tokens 更低，说明 quantile target 优势不足      |
+| LASER-D                       | 同样主打 dynamic + difficulty-aware，是最高风险撞车方向   | 若能复现其 Pareto 优势，需要重新定位 novelty 为 correct-quantile robustness |
+| adaptive checkpoint 复评      | 先确认我们自己的 best checkpoint 上限                     | 若 3999 / final 不稳定，不能急着做大矩阵                                    |
+
+阶段 C：P1 训练与分析。
+
+| baseline / analysis                    | 目的                                                      |
+| -------------------------------------- | --------------------------------------------------------- |
+| Leash-style target-length dual control | 判断动态调 penalty 强度是否足以替代 group quantile target |
+| LAPO-style successful-length prior     | 判断成功长度分布建模是否已经覆盖我们的核心想法            |
+| ARLCP-style reflection analysis        | 判断收益是否主要来自减少反思冗余，而不是 adaptive target  |
+| length bucket + tokens-per-correct     | 解释每个方法是在省冗余 token，还是压掉困难题必要推理      |
+
+阶段 D：论文级证据门槛。
+
+| 门槛            | 通过条件                                                                                             |
+| --------------- | ---------------------------------------------------------------------------------------------------- |
+| 强相关 baseline | ALP、shortest/SOL、correct mean/std、LASER-D 至少 4 类中，我们在 hard reward / TPC Pareto 上不被支配 |
+| 稳健性          | `length_quantile` 至少 2-3 个 seed 或相邻超参保持优势                                                |
+| 消融            | 去掉 `correct_only`、`min_target_len`、`target_quantile` 或 solve-rate gate 会明显变差               |
+| 泛化            | 至少再覆盖代码 RLVR 或另一个 math 模型 / 数据集                                                      |
+| 机制            | 能解释为什么 shortest 和 ALP under-think，而 quantile + floor 保留 hard-set 推理预算                 |
+
+如果阶段 B 的 P0 baseline 已经明显强于我们，路线应转为吸收其机制并重新设计；如果 P0 不强或不稳，再继续推进 `length_quantile` 的
+seed、消融和泛化。
 
 弱 shortest-correct 的重启标准：
 

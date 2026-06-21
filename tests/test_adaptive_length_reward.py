@@ -186,6 +186,85 @@ def test_adaptive_length_penalty_alp_mode_uses_absolute_length_cost():
     )
 
 
+def test_adaptive_length_penalty_correct_mean_std_penalizes_correct_samples():
+    data = _batch(
+        rewards=[1.0, 0.0, 1.0, 1.0],
+        response_lengths=[4, 8, 12, 16],
+    )
+
+    out = reward_adaptive_length_penalty(
+        data,
+        group_size=4,
+        alpha=0.2,
+        reward_threshold=1.0,
+        mode="correct_mean_std",
+        max_penalty=None,
+    )
+
+    lengths = torch.tensor([4.0, 8.0, 12.0, 16.0])
+    expected_penalties = -0.2 * torch.sigmoid(
+        (lengths - lengths.mean()) / lengths.std(unbiased=False)
+    )
+    expected_penalties[1] = 0.0
+
+    torch.testing.assert_close(out["adaptive_length_penalties"], expected_penalties)
+    torch.testing.assert_close(
+        out["adaptive_length_active"], torch.tensor([1.0, 0.0, 1.0, 1.0])
+    )
+    torch.testing.assert_close(
+        out["adaptive_length_target_len"], torch.full((4,), 10.0)
+    )
+    torch.testing.assert_close(
+        out["adaptive_length_solve_rate"], torch.full((4,), 0.75)
+    )
+    torch.testing.assert_close(
+        out["rewards"], torch.tensor([1.0, 0.0, 1.0, 1.0]) + expected_penalties
+    )
+
+
+def test_adaptive_length_penalty_correct_mean_std_does_not_require_min_correct():
+    data = _batch(
+        rewards=[1.0, 0.0, 0.0, 0.0],
+        response_lengths=[4, 8, 12, 16],
+    )
+
+    out = reward_adaptive_length_penalty(
+        data,
+        group_size=4,
+        alpha=0.2,
+        reward_threshold=1.0,
+        min_correct=2,
+        mode="correct_mean_std",
+        max_penalty=None,
+    )
+
+    assert out["adaptive_length_penalties"][0] < 0
+    torch.testing.assert_close(
+        out["adaptive_length_active"], torch.tensor([1.0, 0.0, 0.0, 0.0])
+    )
+
+
+def test_adaptive_length_penalty_correct_mean_std_accepts_alias():
+    data = _batch(
+        rewards=[1.0, 1.0, 0.0, 0.0],
+        response_lengths=[4, 8, 12, 16],
+    )
+
+    out = reward_adaptive_length_penalty(
+        data,
+        group_size=4,
+        alpha=0.2,
+        mode="r1_alpha",
+        max_penalty=None,
+    )
+
+    assert out["adaptive_length_penalties"][0] < 0
+    assert out["adaptive_length_penalties"][1] < 0
+    torch.testing.assert_close(
+        out["adaptive_length_active"], torch.tensor([1.0, 1.0, 0.0, 0.0])
+    )
+
+
 def test_adaptive_length_penalty_alp_mode_uses_paper_beta_when_set():
     data = _batch(
         rewards=[1.0, 0.0, 1.0, 0.0],

@@ -88,6 +88,7 @@ add_override "actor.shortest_correct_reward.normalize_by_shortest" "${actor_shor
 add_override "actor.shortest_correct_reward.max_penalty" "${actor_shortest_correct_reward_max_penalty}"
 add_override "actor.shortest_correct_reward.min_shortest_len" "${actor_shortest_correct_reward_min_shortest_len}"
 add_override "actor.adaptive_length_reward.enabled" "${actor_adaptive_length_reward_enabled}"
+# Modes: length_quantile, correct_mean_std, alp.
 add_override "actor.adaptive_length_reward.mode" "${actor_adaptive_length_reward_mode}"
 add_override "actor.adaptive_length_reward.alpha" "${actor_adaptive_length_reward_alpha}"
 add_override "actor.adaptive_length_reward.reward_threshold" "${actor_adaptive_length_reward_reward_threshold}"

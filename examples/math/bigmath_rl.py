@@ -66,7 +66,10 @@ class ShortestCorrectRewardConfig:
 
 @dataclass
 class AdaptiveLengthRewardConfig:
-    """Group solve-rate adaptive length penalty for math rollouts."""
+    """Adaptive length penalty for math rollouts.
+
+    Supported modes are ``length_quantile``, ``correct_mean_std``, and ``alp``.
+    """
 
     enabled: bool = field(default=False)
     mode: str = field(default="length_quantile")

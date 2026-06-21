@@ -1,11 +1,11 @@
 import functools
-from typing import Any, Dict, List, Union, Tuple
 import logging
+from typing import Any
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 import torch.distributed as dist
+import torch.nn.functional as F
 
 logger = logging.getLogger(__name__)
 
@@ -518,7 +518,9 @@ def reward_shortest_correct_penalty(
         data["shortest_correct_target_len"] = torch.zeros_like(reward_score)
         return data
 
-    raw_rewards = data.get("raw_task_rewards", reward_score).to(dtype=reward_score.dtype)
+    raw_rewards = data.get("raw_task_rewards", reward_score).to(
+        dtype=reward_score.dtype
+    )
     response_lengths = data["loss_mask"].sum(dim=-1).to(dtype=reward_score.dtype)
 
     bs = reward_score.shape[0]
@@ -623,8 +625,7 @@ def _target_adaptive_length_penalty(
     correct_lengths = torch.where(correct, group_lengths, inf_lengths)
     sorted_correct_lengths = correct_lengths.sort(dim=-1).values
     target_index = torch.floor(
-        (correct_count.to(dtype=reward_dtype) - 1.0).clamp(min=0.0)
-        * target_quantile
+        (correct_count.to(dtype=reward_dtype) - 1.0).clamp(min=0.0) * target_quantile
     ).to(dtype=torch.long)
     target_len = sorted_correct_lengths.gather(dim=-1, index=target_index)
     target_len = target_len.clamp(min=float(min_target_len))
@@ -684,6 +685,41 @@ def _alp_adaptive_length_penalty(
     return group_penalties, active, target_values
 
 
+def _correct_mean_std_length_penalty(
+    group_lengths: torch.Tensor,
+    group_valid: torch.Tensor,
+    correct: torch.Tensor,
+    reward_dtype: torch.dtype,
+    alpha: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    valid_count = group_valid.sum(dim=-1, keepdim=True).clamp(min=1)
+    valid_lengths = torch.where(
+        group_valid, group_lengths, torch.zeros_like(group_lengths)
+    )
+    mean_len = valid_lengths.sum(dim=-1, keepdim=True) / valid_count.to(
+        dtype=reward_dtype
+    )
+    centered = torch.where(
+        group_valid, group_lengths - mean_len, torch.zeros_like(group_lengths)
+    )
+    variance = centered.pow(2).sum(dim=-1, keepdim=True) / valid_count.to(
+        dtype=reward_dtype
+    )
+    std_len = variance.sqrt().clamp(min=1.0)
+
+    normalized_len = (group_lengths - mean_len) / std_len
+    group_penalties = -alpha * torch.sigmoid(normalized_len)
+    group_penalties = torch.where(
+        correct, group_penalties, torch.zeros_like(group_penalties)
+    )
+    target_values = torch.where(
+        group_valid,
+        mean_len.expand_as(group_lengths),
+        torch.zeros_like(group_lengths),
+    )
+    return group_penalties, correct, target_values
+
+
 def _compute_adaptive_length_groups(
     data: dict[str, Any],
     group_size: int,
@@ -702,7 +738,9 @@ def _compute_adaptive_length_groups(
     alp_beta: float | None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     reward_score = data["rewards"]
-    raw_rewards = data.get("raw_task_rewards", reward_score).to(dtype=reward_score.dtype)
+    raw_rewards = data.get("raw_task_rewards", reward_score).to(
+        dtype=reward_score.dtype
+    )
     response_lengths = data["loss_mask"].sum(dim=-1).to(dtype=reward_score.dtype)
     bs, group_rewards, group_lengths, group_valid = _group_adaptive_length_inputs(
         reward_score, raw_rewards, response_lengths, group_size
@@ -731,6 +769,14 @@ def _compute_adaptive_length_groups(
             min_target_len,
             normalize_by_target,
             correct_only,
+        )
+    elif mode == "correct_mean_std":
+        group_penalties, active, target_values = _correct_mean_std_length_penalty(
+            group_lengths,
+            group_valid,
+            correct,
+            reward_score.dtype,
+            alpha,
         )
     else:
         group_penalties, active, target_values = _alp_adaptive_length_penalty(
@@ -762,6 +808,8 @@ def _normalize_adaptive_length_mode(mode: str) -> str:
     mode = mode.lower()
     if mode in ("target", "correct_length_quantile"):
         return "length_quantile"
+    if mode in ("mean_std", "correct_length_mean_std", "r1_alpha"):
+        return "correct_mean_std"
     return mode
 
 
@@ -798,7 +846,7 @@ def reward_adaptive_length_penalty(
     length_normalizer: int | float | None = None,
     alp_beta: float | None = None,
 ) -> dict[str, Any]:
-    """Apply correct-length-quantile or ALP-style adaptive length penalties."""
+    """Apply adaptive length penalties for token-efficiency experiments."""
     reward_score = data["rewards"]
     zeros = torch.zeros_like(reward_score)
     mode = _normalize_adaptive_length_mode(mode)
@@ -807,10 +855,10 @@ def reward_adaptive_length_penalty(
         return _store_adaptive_length_outputs(
             data, reward_score, zeros, zeros, zeros, zeros
         )
-    if mode not in ("length_quantile", "alp"):
+    if mode not in ("length_quantile", "correct_mean_std", "alp"):
         raise ValueError(
             f"Unknown adaptive length reward mode {mode!r}; expected "
-            "'length_quantile' or 'alp' "
+            "'length_quantile', 'correct_mean_std', or 'alp' "
             "('target' and 'correct_length_quantile' are legacy aliases)."
         )
 
@@ -840,15 +888,15 @@ def reward_adaptive_length_penalty(
 # New Functions for Decomposed IG / PRM Reward Calculation
 # =============================================================================
 def build_ig_probe_batches(
-        data: Dict[str, Any],
-        mini_batch_size: int,
-        sep_token_id: Union[List[int], List[List[int]]],
-        pad_token_id: int,
-        step_separation_mode: str = "separator",
-        uncertainty_threshold: float = -1.5,
-        min_step_tokens: int = 5,
-        max_step_tokens: int = 128  # [新增] 限制最大截断区间
-) -> Tuple[List[Dict[str, Any]], List[Any]]:
+    data: dict[str, Any],
+    mini_batch_size: int,
+    sep_token_id: list[int] | list[list[int]],
+    pad_token_id: int,
+    step_separation_mode: str = "separator",
+    uncertainty_threshold: float = -1.5,
+    min_step_tokens: int = 5,
+    max_step_tokens: int = 128,  # [新增] 限制最大截断区间
+) -> tuple[list[dict[str, Any]], list[Any]]:
     input_ids = data["input_ids"]
     loss_mask = data["loss_mask"]
     outcome_rewards = data["rewards"]
@@ -893,19 +941,21 @@ def build_ig_probe_batches(
             logprobs=curr_logprobs,
             uncertainty_threshold=uncertainty_threshold,
             min_step_tokens=min_step_tokens,
-            max_step_tokens=max_step_tokens  # [新增] 传入提取逻辑
+            max_step_tokens=max_step_tokens,  # [新增] 传入提取逻辑
         )
 
-        all_probes_info.append({
-            "sample_idx": i,
-            "probes_seqs": probes_seqs,
-            "metadata": metadata,
-            "step_end_indices": step_end_indices,
-            "outcome_reward": curr_outcome,
-            "num_probes": len(probes_seqs),
-            "gt_len": curr_gt_len.item(),
-            "prompt_len": prompt_len
-        })
+        all_probes_info.append(
+            {
+                "sample_idx": i,
+                "probes_seqs": probes_seqs,
+                "metadata": metadata,
+                "step_end_indices": step_end_indices,
+                "outcome_reward": curr_outcome,
+                "num_probes": len(probes_seqs),
+                "gt_len": curr_gt_len.item(),
+                "prompt_len": prompt_len,
+            }
+        )
 
     if batch_size > 0:
         if all_probes_info[0]["num_probes"] == 0:
@@ -916,7 +966,8 @@ def build_ig_probe_batches(
             )
         elif logger.isEnabledFor(logging.INFO):
             logger.info(
-                f"[IG-Debug] Detected {all_probes_info[0]['num_probes']} steps for sample 0 (Mode: {step_separation_mode}).")
+                f"[IG-Debug] Detected {all_probes_info[0]['num_probes']} steps for sample 0 (Mode: {step_separation_mode})."
+            )
 
     flat_probes_seqs = []
     flat_metadata = []
@@ -934,7 +985,7 @@ def build_ig_probe_batches(
 
     if total_probes > 0:
         for i in range(0, total_probes, mini_batch_size):
-            chunk_seqs = flat_probes_seqs[i: i + mini_batch_size]
+            chunk_seqs = flat_probes_seqs[i : i + mini_batch_size]
 
             max_len = max([seq.size(1) for seq in chunk_seqs])
             padded_chunk_inputs = []
@@ -949,32 +1000,33 @@ def build_ig_probe_batches(
 
             batch_input_ids = torch.cat(padded_chunk_inputs, dim=0)
             batch_attention_mask = (batch_input_ids != pad_token_id).long()
-            batch_position_ids = torch.arange(max_len, device=device).unsqueeze(0).expand(len(chunk_seqs), -1)
+            batch_position_ids = (
+                torch.arange(max_len, device=device)
+                .unsqueeze(0)
+                .expand(len(chunk_seqs), -1)
+            )
 
             probe_data = {
                 "input_ids": batch_input_ids,
                 "attention_mask": batch_attention_mask,
-                "position_ids": batch_position_ids
+                "position_ids": batch_position_ids,
             }
             probe_batches.append(probe_data)
 
-    full_metadata = {
-        "all_probes_info": all_probes_info,
-        "flat_metadata": flat_metadata
-    }
+    full_metadata = {"all_probes_info": all_probes_info, "flat_metadata": flat_metadata}
 
     return probe_batches, full_metadata
 
 
 def assign_ig_rewards(
-        data: Dict[str, Any],
-        logprobs_list: List[torch.Tensor],
-        metadata_dict: Dict[str, Any],
-        beta: float = 0.5,
-        use_peak_selection: bool = False,
-        use_watermark_selection: bool = False,  # [新增参数] 最大单调递增子序列过滤
-        reward_mode: str = "prob_diff"
-) -> Dict[str, Any]:
+    data: dict[str, Any],
+    logprobs_list: list[torch.Tensor],
+    metadata_dict: dict[str, Any],
+    beta: float = 0.5,
+    use_peak_selection: bool = False,
+    use_watermark_selection: bool = False,  # [新增参数] 最大单调递增子序列过滤
+    reward_mode: str = "prob_diff",
+) -> dict[str, Any]:
     input_ids = data["input_ids"]
     device = input_ids.device
     all_probes_info = metadata_dict["all_probes_info"]
@@ -982,16 +1034,24 @@ def assign_ig_rewards(
 
     # --- 核心改造：独立初始化结构分、逻辑分与显式Mask ---
     if "token_level_rewards" not in data:
-        data["token_level_rewards"] = torch.zeros_like(input_ids, dtype=torch.float32, device=device)
+        data["token_level_rewards"] = torch.zeros_like(
+            input_ids, dtype=torch.float32, device=device
+        )
     if "step_boundary_mask" not in data:
-        data["step_boundary_mask"] = torch.ones_like(input_ids, dtype=torch.float32, device=device)
+        data["step_boundary_mask"] = torch.ones_like(
+            input_ids, dtype=torch.float32, device=device
+        )
     if "token_level_len_penalties" not in data:
-        data["token_level_len_penalties"] = torch.zeros_like(input_ids, dtype=torch.float32, device=device)
+        data["token_level_len_penalties"] = torch.zeros_like(
+            input_ids, dtype=torch.float32, device=device
+        )
     # 新增：显式的步骤掩码。之前使用 (raw_step_rewards != 0) 过滤，
     # 但由于 Hindsight 约束可能会把无效步骤的奖励强行置为 0.0，这会导致步骤被漏算，
     # 破坏了 RMS Norm 的基数计算，现在我们使用显式的 1.0/0.0 mask 记录有效步骤。
     if "step_reward_mask" not in data:
-        data["step_reward_mask"] = torch.zeros_like(input_ids, dtype=torch.float32, device=device)
+        data["step_reward_mask"] = torch.zeros_like(
+            input_ids, dtype=torch.float32, device=device
+        )
 
     all_log_prob_sums = []
     current_flat_idx = 0
@@ -1031,7 +1091,7 @@ def assign_ig_rewards(
             logger.error(f"[IG-Error] Missing logprobs for sample {sample_idx}")
             continue
 
-        sample_log_probs = all_log_prob_sums[start_idx: start_idx + num]
+        sample_log_probs = all_log_prob_sums[start_idx : start_idx + num]
 
         # 提取真实步长 (Token 数量)
         step_lengths = []
@@ -1049,10 +1109,12 @@ def assign_ig_rewards(
             use_watermark_selection=use_watermark_selection,  # 传入底层
             reward_mode=reward_mode,
             gt_len=gt_len,
-            step_lengths=step_lengths
+            step_lengths=step_lengths,
         )
 
-        for r, p, idx in zip(calculated_rewards, calculated_penalties, step_end_indices):
+        for r, p, idx in zip(
+            calculated_rewards, calculated_penalties, step_end_indices
+        ):
             if idx > 0 and idx <= input_ids.shape[1]:
                 # 纯粹的逻辑跃升奖励
                 data["token_level_rewards"][sample_idx, idx - 1] += r
@@ -1068,18 +1130,18 @@ def assign_ig_rewards(
 
 
 def _prepare_single_sample_probes(
-        input_ids,
-        prompt_len,
-        ig_gt_ids,
-        ig_bridge_len,
-        ig_gt_len,
-        sep_token_id: Union[List[int], List[List[int]]],
-        pad_token_id: int,
-        step_separation_mode: str = "separator",
-        logprobs: torch.Tensor | None = None,
-        uncertainty_threshold: float = -1.5,
-        min_step_tokens: int = 5,
-        max_step_tokens: int = 128  # [新增] 防止 Qwen BPE 粘连导致的无节制膨胀
+    input_ids,
+    prompt_len,
+    ig_gt_ids,
+    ig_bridge_len,
+    ig_gt_len,
+    sep_token_id: list[int] | list[list[int]],
+    pad_token_id: int,
+    step_separation_mode: str = "separator",
+    logprobs: torch.Tensor | None = None,
+    uncertainty_threshold: float = -1.5,
+    min_step_tokens: int = 5,
+    max_step_tokens: int = 128,  # [新增] 防止 Qwen BPE 粘连导致的无节制膨胀
 ):
     if input_ids.dim() == 1:
         input_ids = input_ids.unsqueeze(0)
@@ -1108,7 +1170,7 @@ def _prepare_single_sample_probes(
                 for cand in separator_candidates:
                     cand_len = len(cand)
                     if i + cand_len <= len(reasoning_list):
-                        if reasoning_list[i: i + cand_len] == cand:
+                        if reasoning_list[i : i + cand_len] == cand:
                             # 确保切分出来的 step 长度 >= min_step_tokens
                             end_idx = i + cand_len - 1
                             if end_idx - last_cut_idx >= min_step_tokens:
@@ -1170,7 +1232,7 @@ def _prepare_single_sample_probes(
     metadata.append((target_start_0, target_end_0))
 
     for rel_end_idx in step_rel_indices:
-        current_cot = reasoning_ids[:, :rel_end_idx + 1]
+        current_cot = reasoning_ids[:, : rel_end_idx + 1]
         probe_seq = torch.cat([q_tensor, current_cot, suffix_tensor], dim=1)
         prefix_len = q_len + current_cot.shape[1]
         target_start = prefix_len + suffix_gt_start_idx
@@ -1183,28 +1245,36 @@ def _prepare_single_sample_probes(
 
 
 def _compute_rewards_logic(
-        log_probs,
-        outcome_reward,
-        beta,
-        use_peak_selection=False,
-        use_watermark_selection=False,
-        max_abs_step_reward=5.0,
-        reward_mode="prob_diff",
-        gt_len=1,
-        step_lengths=None
+    log_probs,
+    outcome_reward,
+    beta,
+    use_peak_selection=False,
+    use_watermark_selection=False,
+    max_abs_step_reward=5.0,
+    reward_mode="prob_diff",
+    gt_len=1,
+    step_lengths=None,
 ):
     T = len(log_probs) - 1
     is_correct = outcome_reward > 0
     final_rewards = []
     final_penalties = []
     step_probs = []
-    device = log_probs[0].device if isinstance(log_probs[0], torch.Tensor) else torch.device("cpu")
-    log_probs = [torch.as_tensor(lp, dtype=torch.float32, device=device) for lp in log_probs]
+    device = (
+        log_probs[0].device
+        if isinstance(log_probs[0], torch.Tensor)
+        else torch.device("cpu")
+    )
+    log_probs = [
+        torch.as_tensor(lp, dtype=torch.float32, device=device) for lp in log_probs
+    ]
 
     norm_len = max(1, gt_len)
     # 提取 P_0 作为初始水位
     p_0_tensor = torch.exp(log_probs[0] / norm_len)
-    initial_watermark = p_0_tensor.item() if isinstance(p_0_tensor, torch.Tensor) else p_0_tensor
+    initial_watermark = (
+        p_0_tensor.item() if isinstance(p_0_tensor, torch.Tensor) else p_0_tensor
+    )
 
     for t in range(1, T + 1):
         raw_r_t = torch.tensor(0.0).to(device) if device else 0.0
@@ -1240,7 +1310,9 @@ def _compute_rewards_logic(
         # [修改] 暂时不用长度惩罚，强置为 0.0
         len_penalty = 0.0
         final_rewards.append(clipped_r_t)
-        final_penalties.append(torch.tensor(len_penalty).to(device) if device else len_penalty)
+        final_penalties.append(
+            torch.tensor(len_penalty).to(device) if device else len_penalty
+        )
 
     def get_val(idx):
         r = final_rewards[idx]
@@ -1271,8 +1343,11 @@ def _compute_rewards_logic(
             if p_t > running_max:
                 raw_r = p_t - running_max
                 clipped_r = torch.clamp(
-                    torch.tensor(raw_r, dtype=torch.float32, device=device) if device else raw_r,
-                    -max_abs_step_reward, max_abs_step_reward
+                    torch.tensor(raw_r, dtype=torch.float32, device=device)
+                    if device
+                    else raw_r,
+                    -max_abs_step_reward,
+                    max_abs_step_reward,
                 )
                 new_rewards.append(clipped_r)
                 new_penalties.append(final_penalties[i])
@@ -1280,8 +1355,16 @@ def _compute_rewards_logic(
                 running_max = p_t
             else:
                 # 未突破水位线，过滤掉（逻辑奖励置 0，长度惩罚也置 0 以免引入噪声，水位保持不变）
-                new_rewards.append(torch.tensor(0.0, dtype=torch.float32, device=device) if device else 0.0)
-                new_penalties.append(torch.tensor(0.0, dtype=torch.float32, device=device) if device else 0.0)
+                new_rewards.append(
+                    torch.tensor(0.0, dtype=torch.float32, device=device)
+                    if device
+                    else 0.0
+                )
+                new_penalties.append(
+                    torch.tensor(0.0, dtype=torch.float32, device=device)
+                    if device
+                    else 0.0
+                )
 
         final_rewards = new_rewards
         final_penalties = new_penalties
