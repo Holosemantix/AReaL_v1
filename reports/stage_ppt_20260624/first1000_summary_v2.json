@@ -1,0 +1,122 @@
+{
+  "ours_lq": {
+    "label": "Ours: length-quantile",
+    "eval_last": {
+      "run": "ours_lq",
+      "label": "Ours: length-quantile",
+      "step": 999,
+      "macro_reward": 0.4564499996185303,
+      "hard_reward": 0.34375,
+      "math500_reward": 0.9072499980926514,
+      "avg_eval_len": 7367.343991520183,
+      "hard_eval_len": 8557.042708333334,
+      "math500_len": 2608.549124267578
+    },
+    "train_last": {
+      "run": "ours_lq",
+      "label": "Ours: length-quantile",
+      "step": 999,
+      "train_raw_reward": 0.54443359375,
+      "train_task_reward": 0.5438554883003235,
+      "train_response_len": 3914.521484375,
+      "train_correct_len": 3274.052978515625,
+      "train_incorrect_len": 4917.3193359375
+    }
+  },
+  "overlong4k": {
+    "label": "Overlong 4k",
+    "eval_last": {
+      "run": "overlong4k",
+      "label": "Overlong 4k",
+      "step": 999,
+      "macro_reward": 0.4438583341916402,
+      "hard_reward": 0.32916666666666666,
+      "math500_reward": 0.9026250042915345,
+      "avg_eval_len": 7251.038330696615,
+      "hard_eval_len": 8167.918229166667,
+      "math500_len": 3583.518736816406
+    },
+    "train_last": {
+      "run": "overlong4k",
+      "label": "Overlong 4k",
+      "step": 999,
+      "train_raw_reward": 0.564453125,
+      "train_task_reward": 0.5623838901519775,
+      "train_response_len": 5355.9755859375,
+      "train_correct_len": 4733.77099609375,
+      "train_incorrect_len": 6417.43408203125
+    }
+  },
+  "overlong8k": {
+    "label": "Overlong 8k",
+    "eval_last": {
+      "run": "overlong8k",
+      "label": "Overlong 8k",
+      "step": 999,
+      "macro_reward": 0.4000333326419194,
+      "hard_reward": 0.27760416666666665,
+      "math500_reward": 0.8897499965429306,
+      "avg_eval_len": 4796.025967154948,
+      "hard_eval_len": 5338.864583333334,
+      "math500_len": 2624.671502441406
+    },
+    "train_last": {
+      "run": "overlong8k",
+      "label": "Overlong 8k",
+      "step": 999,
+      "train_raw_reward": 0.48828125,
+      "train_task_reward": 0.48666131496429443,
+      "train_response_len": 4023.4384765625,
+      "train_correct_len": 3584.10791015625,
+      "train_incorrect_len": 4676.73876953125
+    }
+  },
+  "shortest005": {
+    "label": "Shortest a=0.05",
+    "eval_last": {
+      "run": "shortest005",
+      "label": "Shortest a=0.05",
+      "step": 999,
+      "macro_reward": 0.3791416654745738,
+      "hard_reward": 0.25833333333333336,
+      "math500_reward": 0.8623749940395355,
+      "avg_eval_len": 4611.327032478841,
+      "hard_eval_len": 5443.316666666667,
+      "math500_len": 1283.368495727539
+    },
+    "train_last": {
+      "run": "shortest005",
+      "label": "Shortest a=0.05",
+      "step": 999,
+      "train_raw_reward": 0.51416015625,
+      "train_task_reward": 0.502503514289856,
+      "train_response_len": 1529.22509765625,
+      "train_correct_len": 1114.8299560546875,
+      "train_incorrect_len": 2190.3125
+    }
+  },
+  "alp": {
+    "label": "ALP beta=1e-7",
+    "eval_last": {
+      "run": "alp",
+      "label": "ALP beta=1e-7",
+      "step": 999,
+      "macro_reward": 0.14413333330949146,
+      "hard_reward": 0.026041666666666668,
+      "math500_reward": 0.6164999998807907,
+      "avg_eval_len": 125.71190822957355,
+      "hard_eval_len": 105.54479166666667,
+      "math500_len": 206.38037448120116
+    },
+    "train_last": {
+      "run": "alp",
+      "label": "ALP beta=1e-7",
+      "step": 999,
+      "train_raw_reward": 0.3046875,
+      "train_task_reward": 0.30467987060546875,
+      "train_response_len": 217.71337890625,
+      "train_correct_len": 341.5705261230469,
+      "train_incorrect_len": 328.1355285644531
+    }
+  }
+}
