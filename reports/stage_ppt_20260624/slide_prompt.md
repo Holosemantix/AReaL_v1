@@ -13,7 +13,7 @@ BigMath 0.5B / GRPO / 16k max tokens / group size 16
 版式：
 
 - 左侧 35%-40% 放方法示意图。
-- 右侧 60%-65% 放实验对比图，上下两个 panel：上方 hard-set reward，下方 average eval response length。
+- 右侧 60%-65% 放实验对比图，上下两个 panel：上方 AIME24/25/26 + HMMT25 reward，下方 average eval response length。
 - 底部放一句结论 callout。
 
 方法示意图内容：
@@ -37,7 +37,7 @@ penalty_i = -alpha * gate(solve_rate_g) * max(0, len_i - target_g) / target_g
 实验图请使用或复刻这些数据结论：
 
 - 曲线范围：training step 0-999。
-- Score panel：hard-set reward，hard set = AIME24/25/26 + HMMT25。
+- Score panel：AIME24/25/26 + HMMT25 reward。
 - Length panel：average eval response length，单位 k tokens。
 - 方法曲线：
   - Ours: length-quantile

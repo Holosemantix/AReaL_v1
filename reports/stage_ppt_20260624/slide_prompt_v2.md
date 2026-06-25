@@ -39,14 +39,14 @@ target_g = max(quantile(correct_lengths_g, q), min_target_len)
 penalty_i = -alpha * gate(solve_rate_g) * max(0, len_i - target_g) / target_g
 ```
 
-实验图请展示 6 个 panel，三列分别为 Train / MATH500 / Hard-set，每列上方是 reward、下方是 length：
+实验图请展示 6 个 panel，三列分别为 Train / MATH500 / AIME24/25/26 + HMMT25，每列上方是 reward、下方是 length：
 
 - Train raw reward：训练 raw task reward，25-step rolling average，纵坐标从 0.2 开始。
 - Train length：训练 response length，25-step rolling average，单位 k tokens。
 - MATH500 reward：简单集合准确率/奖励。
 - MATH500 length：MATH500 eval response length，单位 k tokens。
-- Hard-set reward：AIME24/25/26 + HMMT25 平均 reward。
-- Hard-set length：AIME24/25/26 + HMMT25 eval response length，单位 k tokens。
+- AIME24/25/26 + HMMT25 reward：困难竞赛集合平均 reward。
+- AIME24/25/26 + HMMT25 length：困难竞赛集合 eval response length，单位 k tokens。
 
 方法曲线保留：
 
@@ -63,11 +63,11 @@ penalty_i = -alpha * gate(solve_rate_g) * max(0, len_i - target_g) / target_g
 - Step 999: ours hard reward 0.344 @ 7.4k avg eval tokens。
 - Overlong 4k: 0.329 @ 7.3k，长度接近但 hard reward 更低。
 - ALP beta=1e-7: 0.026 @ 0.1k，明显 under-thinking。
-- MATH500 多数方法接近饱和，因此必须同时展示 hard-set；只看 MATH500 会掩盖困难题能力差异。
+- MATH500 多数方法接近饱和，因此必须同时展示 AIME24/25/26 + HMMT25；只看 MATH500 会掩盖困难题能力差异。
 
 底部结论：
 
-length-quantile 的优势不是更强惩罚，而是更安全的目标构造：MATH500 保持高分，hard-set 不被压垮，训练 reward 没有像 ALP/shortest 那样和短输出吸引子绑定。
+length-quantile 的优势不是更强惩罚，而是更安全的目标构造：MATH500 保持高分，AIME24/25/26 + HMMT25 不被压垮，训练 reward 没有像 ALP/shortest 那样和短输出吸引子绑定。
 
 可上传素材：
 
