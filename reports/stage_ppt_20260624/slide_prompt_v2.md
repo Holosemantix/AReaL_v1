@@ -17,7 +17,7 @@ mean/std baseline 可以从主图中剔除。它和我们的 length-quantile 不
 版式：
 
 - 左侧 30%-35% 放方法示意图。
-- 右侧 65%-70% 放 2x3 指标 dashboard。
+- 右侧 65%-70% 放 2x3 指标 dashboard，按列成组：上面是 reward，下面是对应 length。
 - 图例放在 dashboard 顶部。
 - 底部放一句结论 callout。
 
@@ -39,13 +39,13 @@ target_g = max(quantile(correct_lengths_g, q), min_target_len)
 penalty_i = -alpha * gate(solve_rate_g) * max(0, len_i - target_g) / target_g
 ```
 
-实验图请展示 6 个 panel：
+实验图请展示 6 个 panel，三列分别为 Train / MATH500 / Hard-set，每列上方是 reward、下方是 length：
 
-- Train raw reward：训练 raw task reward，25-step rolling average。
+- Train raw reward：训练 raw task reward，25-step rolling average，纵坐标从 0.2 开始。
 - Train length：训练 response length，25-step rolling average，单位 k tokens。
 - MATH500 reward：简单集合准确率/奖励。
-- Hard-set reward：AIME24/25/26 + HMMT25 平均 reward。
 - MATH500 length：MATH500 eval response length，单位 k tokens。
+- Hard-set reward：AIME24/25/26 + HMMT25 平均 reward。
 - Hard-set length：AIME24/25/26 + HMMT25 eval response length，单位 k tokens。
 
 方法曲线保留：
@@ -72,6 +72,6 @@ length-quantile 的优势不是更强惩罚，而是更安全的目标构造：M
 可上传素材：
 
 - `method_schematic.png`：方法示意图。
-- `first1000_metrics_dashboard.png`：2x3 指标 dashboard。
+- `first1000_metrics_dashboard.png`：按列配对 reward/length 的 2x3 指标 dashboard。
 - `one_slide_mockup_v2.png`：完整一页 mockup，可作为版式参考。
 - `first1000_train_eval_metrics_v2.csv`：绘图数据。
