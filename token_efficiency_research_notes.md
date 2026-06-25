@@ -1,6 +1,6 @@
 # 精简推理与 Token 效率优化技术报告
 
-更新时间：2026-06-21
+更新时间：2026-06-24
 
 状态：工作稿
 
@@ -117,6 +117,26 @@ shortest-correct 实现没有达到预期：它显著压短 response_len，同�
   reflection-aware variant。
 - 路线图调整：先把相关方法拆成可复现 baselines，统一在 BigMath 0.5B 16k 协议下比较 macro reward、hard reward、eval
   length、tokens-per-correct 和 Pareto frontier；只有我们在这些强基线下仍保持稳定优势，才推进顶会主叙事。
+
+2026-06-24 追加结论：
+
+- Correct-only mean/std baseline 已有两组同协议实测：`alpha=0.05` 跑到 step `1623`，`alpha=0.02` 跑到
+  step `1183`。两组都使用 `mode=correct_mean_std`，只对正确样本施加
+  `-alpha * sigmoid((len - group_mean_len) / group_std_len)`，不使用 solve-rate
+  gate、correct-length quantile target 或 `min_target_len` 下界保护。
+- `alpha=0.02` 确实把平均长度惩罚从 `alpha=0.05` 的后期约 `-0.013` 降到约 `-0.005`，但 eval 质量没有追上
+  `length_quantile`。截至当前最新 eval step `1099`，`alpha=0.02` 的 macro / hard reward 为
+  `0.401 / 0.286`，平均 eval len / hard len 为 `6.0k / 7.2k`；同 step `length_quantile` 为
+  `0.450 / 0.336`，长度 `7.2k / 8.4k`。
+- `alpha=0.02` 的 best 点是 step `299`，macro / hard reward `0.434 / 0.321`，仍低于
+  `length_quantile` 同 step 的 `0.448 / 0.337`。此后 reward 持续走低，step `999` 相比
+  `length_quantile` 低 `6.3` macro 点、`7.0` hard 点，只省约 `1.2k` eval token，不形成 Pareto 优势。
+- 机制上，mean/std 方法虽然比 shortest 和 ALP 温和，但仍持续压正确样本长度：`alpha=0.02` last100 train correct
+  length 约 `1.8k`，raw reward 约 `0.518`；`length_quantile` last100 correct length 约
+  `2.5k`，raw reward 约 `0.655`。这说明单纯降低 mean/std 权重不能解决“正确推理被持续压短”的目标偏差。
+- 当前判断：correct-only mean/std baseline 可作为高风险相关方法的负结果记录，但不应继续做简单 `alpha=0.01/0.02/0.05`
+  sweep。下一步仍应优先推进 `length_quantile` 的 checkpoint 复评、稳健性小矩阵和 LASER-D / difficulty-aware
+  baseline 的公式核对与最小忠实复现。
 
 ## 问题定义
 
@@ -619,6 +639,7 @@ length_reward_i =
 | shortest-correct 运行参数 | 已接入，需重调保护参数         | 支持训练脚本直接配置 alpha / group size 等变量 | `examples/*/grpo_template*.yaml`, `run_trainer_mtp.sh`              | L3       |
 | adaptive length reward    | 已实现，首个 16k 正结果        | solve-rate 自适应正确样本分位数长度目标        | `areal/utils/functional/functional.py`                              | L3       |
 | ALP mode                  | 已实现；paper-scale 训练负结果 | 对所有有效样本按 solve rate 与长度线性扣分     | `mode=alp`, `alp_beta`, `length_normalizer`                         | L2       |
+| correct mean/std mode     | 已实现；两组中期训练负结果     | 只对正确样本按组内长度均值 / 方差做归一化惩罚  | `mode=correct_mean_std`                                             | L2       |
 
 ### 实验矩阵
 
@@ -631,7 +652,7 @@ length_reward_i =
 | E4   | solve-rate length-quantile adaptive penalty 能否按题目难度平衡长度与正确率 | 16k 完整训练完成，优于 16k overlong completed baseline                        | `min_solve_rate`, `target_quantile`, `min_target_len`, `max_penalty` | `adaptive_length_penalty`, `adaptive_length_solve_rate`, `response_len`, eval reward         | hard-set reward 基本不降且 eval len 有实质下降                   | L3       |
 | E5   | ALP mode 是否能作为 adaptive 对照                                          | 旧 normalized-alpha ALP 坍缩；paper-scale `alp_beta=1e-7` 严重 under-thinking | `mode=alp`, `alp_beta`, gating / schedule                            | eval reward, response_len, raw_task_reward, collapse step                                    | standalone 已判负；若继续变体，hard reward 不能低于 16k baseline | L2       |
 | E6   | 代码任务中应压缩 reasoning tokens 还是 total response tokens               | 待执行                                                                        | reasoning / code token 拆分方式                                      | pass rate by length bucket, failure type by length bucket                                    | 找到不损害代码鲁棒性的压缩目标                                   | L0       |
-| E7   | 高风险相关方法是否已能超过 `length_quantile` adaptive                      | 待执行；ALP 和 shortest 已有负结果                                            | mean/std correct penalty, LASER-D, Leash, LAPO, ARLCP                | macro reward, hard reward, eval len, tokens-per-correct, Pareto frontier                     | 至少 3 个高风险 baseline 同协议不优于我们，或明确边界条件        | L0       |
+| E7   | 高风险相关方法是否已能超过 `length_quantile` adaptive                      | 进行中；ALP、shortest、correct mean/std 已有负结果                            | LASER-D, Leash, LAPO, ARLCP，必要时 gated / scheduled ALP            | macro reward, hard reward, eval len, tokens-per-correct, Pareto frontier                     | 至少 3 个高风险 baseline 同协议不优于我们，或明确边界条件        | L2       |
 
 ### E0：DAPO Overlong Penalty 初步观察
 
@@ -794,7 +815,7 @@ alpha=0.05 在 step 1327 的分数据集对比：
 | ------ | -------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | P0     | adaptive checkpoint 复评               | 确认 best 附近 saved checkpoint 是否优于 final       | 优先评估 `globalstep3999`，同时保留 final；若 3999 稳定更好，将其作为当前 16k adaptive 候选模型                  |
 | P0     | 长度分桶与 tokens-per-correct 离线分析 | 解释 adaptive 为什么提升 hard reward，同时控制 token | 对 overlong8k、overlong4k、adaptive 计算 `correct_rate_by_len_bucket`、`tokens_per_correct`、`correct_len` 曲线  |
-| P0     | correct-only mean/std baseline         | 实测 R1-Alpha / efficient reasoning 近邻方法是否更强 | 同 BigMath 0.5B 16k 协议；只惩罚正确响应，用同 prompt rollout 长度均值 / 方差归一化；必须报告 hard reward 和 TPC |
+| P0     | correct-only mean/std baseline         | 实测 R1-Alpha / efficient reasoning 近邻方法是否更强 | `alpha=0.05/0.02` 已有负结果；不再继续简单 alpha sweep，详见 E7a                                                 |
 | P0     | LASER-D / difficulty-aware baseline    | 实测 difficulty-aware length shaping 是否优于我们    | 先核对原文和开源公式；若可复现，保持同 group size / max_new_tokens / eval protocol；若不可复现，做最小忠实 proxy |
 | P1     | `length_quantile` adaptive 小矩阵      | 验证当前正结果是否稳健                               | 围绕 `alpha=0.03/0.05`、`min_solve_rate=0.5/0.75`、`target_quantile=0.25/0.5`、`min_target_len=4096/8192`        |
 | P1     | Leash-style target-length dual control | 实测动态 penalty 强度能否更稳                        | 目标长度取 overlong8k / adaptive 的 eval len 区间；用 Lagrangian 更新 penalty；判断是否牺牲 hard reward          |
@@ -805,9 +826,10 @@ alpha=0.05 在 step 1327 的分数据集对比：
 | P2     | 成功长轨迹压缩 SFT                     | 从成功轨迹中删除冗余表达，而不是用 RL 强行追最短     | teacher compression + verifier filtering；作为后续长到短 pipeline 的数据阶段                                     |
 | P2     | budget-conditioned 多模式              | 简单题短答，难题保留长推理 fallback                  | `<think_short>` / `<think_long>` / adaptive fallback                                                             |
 
-当前最优先推荐：不要再继续插值式 overlong sweep，也不要继续 shortest alpha sweep。先把 adaptive 的 saved
-checkpoint 复评和长度分桶补齐，同时启动 P0 相关方法 baseline。`mode=alp` standalone 已有过强参数与 paper-scale
-两次负结果，除非要写失败 ablation 或讨论 gated / scheduled 变体，否则不占用主线资源。
+当前最优先推荐：不要再继续插值式 overlong sweep、shortest alpha sweep 或 correct mean/std alpha sweep。先把
+adaptive 的 saved checkpoint 复评和长度分桶补齐，同时推进 LASER-D / difficulty-aware 的公式核对和最小忠实
+baseline。`mode=alp` standalone 已有过强参数与 paper-scale 两次负结果，除非要写失败 ablation 或讨论 gated /
+scheduled 变体，否则不占用主线资源。
 
 强相关 baseline 的统一协议：
 
@@ -837,7 +859,7 @@ checkpoint 复评和长度分桶补齐，同时启动 P0 相关方法 baseline�
 
 | baseline                      | 为什么先跑                                                | 成功 / 失败判据                                                             |
 | ----------------------------- | --------------------------------------------------------- | --------------------------------------------------------------------------- |
-| correct-only mean/std penalty | 和我们的 correct-gated quantile target 最近，且实现成本低 | 若 hard reward 与我们接近且 tokens 更低，说明 quantile target 优势不足      |
+| correct-only mean/std penalty | 和我们的 correct-gated quantile target 最近，且实现成本低 | `0.05/0.02` 均未优于 `length_quantile`，当前作为负结果记录                  |
 | LASER-D                       | 同样主打 dynamic + difficulty-aware，是最高风险撞车方向   | 若能复现其 Pareto 优势，需要重新定位 novelty 为 correct-quantile robustness |
 | adaptive checkpoint 复评      | 先确认我们自己的 best checkpoint 上限                     | 若 3999 / final 不稳定，不能急着做大矩阵                                    |
 
@@ -862,6 +884,107 @@ checkpoint 复评和长度分桶补齐，同时启动 P0 相关方法 baseline�
 
 如果阶段 B 的 P0 baseline 已经明显强于我们，路线应转为吸收其机制并重新设计；如果 P0 不强或不稳，再继续推进 `length_quantile` 的
 seed、消融和泛化。
+
+### E7a：Correct-only Mean/Std Baseline
+
+研究问题：correct-only mean/std penalty 是否已经能以更简单的长度归一化方式替代 `length_quantile` 的
+correct-length quantile target。
+
+方法形式：
+
+```text
+correct_i = raw_task_reward_i >= reward_threshold
+mu_g = mean(response_len_j in group g)
+sigma_g = std(response_len_j in group g)
+
+penalty_i =
+  0, if sample i incorrect
+  -alpha * sigmoid((response_len_i - mu_g) / sigma_g), if sample i correct
+```
+
+该 baseline 只使用组内长度均值 / 方差和正确性 mask。它不使用 `length_quantile` 的 solve-rate gate、
+`target_quantile`、`min_target_len` 或 lower-bound target，因此是更简单、更接近 R1-Alpha / efficient
+reasoning 风格的 correct-only 长度惩罚对照。
+
+日志来源：
+
+| run                         | 路径                                                                                                                                                 | 状态                           |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| `correct_mean_std_alpha005` | `dataset/ag_data/logs/areal/experiments/logs/root/ailab_slm_0_5b_think_bigmath/mtp_grpo_muon_16k_groupsize_16_lr_4e-5_correct_mean_std_005_20260621` | 跑到 step `1623`，eval 到 1599 |
+| `correct_mean_std_alpha002` | `dataset/ag_data/logs/areal/experiments/logs/root/ailab_slm_0_5b_think_bigmath/mtp_grpo_muon_16k_groupsize_16_lr_4e-5_correct_mean_std_002_20260623` | 跑到 step `1183`，eval 到 1099 |
+
+配置核对：
+
+| 参数              | `alpha=0.05`       | `alpha=0.02`       | 备注                                     |
+| ----------------- | ------------------ | ------------------ | ---------------------------------------- |
+| `mode`            | `correct_mean_std` | `correct_mean_std` | 同一代码路径                             |
+| `group_size`      | `16`               | `16`               | 与 GRPO group rollout 对齐               |
+| `max_new_tokens`  | `16384`            | `16384`            | 同 BigMath 0.5B 16k 协议                 |
+| `max_penalty`     | `0.05`             | `0.05`             | 单样本 penalty 上限                      |
+| `correct_only`    | `true`             | `true`             | 在该 mode 中实际生效                     |
+| `min_solve_rate`  | `0.75`             | `0.75`             | 在该 mode 中不参与计算                   |
+| `target_quantile` | `0.5`              | `0.5`              | 在该 mode 中不参与计算                   |
+| `min_target_len`  | `4096`             | `4096`             | 在该 mode 中不参与计算                   |
+| `alp_beta`        | `1e-7`             | `1e-7`             | 配置字段存在，但只有 `mode=alp` 时才使用 |
+
+当前结果汇总：
+
+| run                         | 当前 eval 点 | 当前 macro / hard reward | best macro / hard reward  | 当前 eval len / hard len | last100 train len | last100 raw reward | last100 penalty |
+| --------------------------- | ------------ | ------------------------ | ------------------------- | ------------------------ | ----------------- | ------------------ | --------------- |
+| `correct_mean_std_alpha005` | step `1599`  | 0.409 / 0.297            | 0.437 / 0.325 @ step 399  | 6.2k / 7.4k              | 2.4k              | 0.536              | -0.0130         |
+| `correct_mean_std_alpha002` | step `1099`  | 0.401 / 0.286            | 0.434 / 0.321 @ step 299  | 6.0k / 7.2k              | 2.3k              | 0.518              | -0.0050         |
+| `length_quantile`           | final        | 0.470 / 0.361            | 0.488 / 0.383 @ step 3599 | 5.7k / 6.7k              | 2.9k              | 0.655              | -0.0003         |
+
+`alpha=0.02` eval 曲线：
+
+| step | macro reward | hard reward | avg eval len | hard len | 备注                           |
+| ---- | ------------ | ----------- | ------------ | -------- | ------------------------------ |
+| 0    | 0.421        | 0.308       | 11.1k        | 12.7k    | 初始评估波动略高               |
+| 199  | 0.424        | 0.309       | 9.4k         | 10.9k    | 已开始低于 `length_quantile`   |
+| 299  | 0.434        | 0.321       | 8.9k         | 10.5k    | 当前 best，但仍低于 LQ 同 step |
+| 499  | 0.413        | 0.297       | 7.4k         | 8.7k     | 质量开始明显掉队               |
+| 799  | 0.412        | 0.297       | 6.5k         | 7.7k     | token 更省但 reward 不足       |
+| 999  | 0.393        | 0.274       | 6.2k         | 7.3k     | 相比 LQ 同 step 低 6-7 点      |
+| 1099 | 0.401        | 0.286       | 6.0k         | 7.2k     | 仍未恢复到可竞争区间           |
+
+同 step 与 `length_quantile` 对比：
+
+| step | mean/std `0.02` macro / hard / len | `length_quantile` macro / hard / len | 结论                        |
+| ---- | ---------------------------------- | ------------------------------------ | --------------------------- |
+| 299  | 0.434 / 0.321 / 8.9k               | 0.448 / 0.337 / 9.8k                 | 省约 0.8k token，但质量已低 |
+| 599  | 0.419 / 0.305 / 6.9k               | 0.455 / 0.344 / 8.4k                 | hard 低约 4.0 点            |
+| 999  | 0.393 / 0.274 / 6.2k               | 0.456 / 0.344 / 7.4k                 | hard 低约 7.0 点            |
+| 1099 | 0.401 / 0.286 / 6.0k               | 0.450 / 0.336 / 7.2k                 | 仍被 LQ 明显支配            |
+
+训练侧窗口：
+
+| run / window               | train len | raw reward | penalty | correct len | incorrect len | 解释                                       |
+| -------------------------- | --------- | ---------- | ------- | ----------- | ------------- | ------------------------------------------ |
+| mean/std `0.02`, 0-99      | 6.1k      | 0.471      | -0.0044 | 4.9k        | 7.4k          | 初期与 `0.05` 接近                         |
+| mean/std `0.02`, 400-799   | 3.1k      | 0.508      | -0.0049 | 2.4k        | 4.1k          | 正确样本长度快速下探                       |
+| mean/std `0.02`, last100   | 2.3k      | 0.518      | -0.0050 | 1.8k        | 3.2k          | 仍存在 correct-output 过短化               |
+| mean/std `0.05`, last100   | 2.4k      | 0.536      | -0.0130 | 1.8k        | 3.3k          | 更强 penalty 并未带来更好泛化              |
+| `length_quantile`, last100 | 2.9k      | 0.655      | -0.0003 | 2.5k        | 4.1k          | 更弱 penalty + target 下界保留成功推理预算 |
+
+机制解释：
+
+- `alpha=0.02` 把长度项强度降到 `0.05` 的约 40%，但仍直接惩罚所有正确样本中高于组内均值的输出。它没有判断当前 prompt 是否足够
+  easy，也没有保证 target length 不低于某个可用推理预算。
+- 该目标会持续把正确样本往组内均值以下压；随着策略整体变短，组内均值也下降，形成和 shortest 类似但更温和的 moving target。
+- 从训练侧看，mean/std 的 correct length 后期约 `1.8k`，而 `length_quantile` 是约 `2.5k`。在 hard eval
+  上，mean/std 正是在这段区间明显掉队，说明它省掉的不只是冗余 token。
+- `length_quantile` 的优势不是“penalty 更大”，而是 penalty 更有选择性：只在 solve-rate 足够高的 group
+  激活，并用正确样本分位数和 `min_target_len` 提供下界保护。
+
+当前结论：
+
+| 问题                                  | 判断                                                                                          |
+| ------------------------------------- | --------------------------------------------------------------------------------------------- |
+| mean/std 是否比 ALP / shortest 更稳   | 是。它不会像 ALP 那样坍到几百 token，也比 shortest `alpha=0.2` 温和                           |
+| mean/std 是否能替代 `length_quantile` | 否。`0.05/0.02` 均未形成 reward / token Pareto 优势                                           |
+| 是否继续做简单 alpha sweep            | 不建议。`0.02` 已说明“降权重”不足以修正目标偏差                                               |
+| 是否继续当前 `0.02` run               | 若已经占用资源，可观察到 step `1500-2000`；若 hard reward 仍低于 `0.32`，建议停止             |
+| 下一步高风险 baseline                 | 优先 LASER-D / difficulty-aware 公式核对；Leash-style dual control 作为 P1；不再优先 mean/std |
 
 弱 shortest-correct 的重启标准：
 

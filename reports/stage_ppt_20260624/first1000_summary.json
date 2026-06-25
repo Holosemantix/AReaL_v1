@@ -1,0 +1,68 @@
+{
+  "ours_lq": {
+    "label": "Ours: length-quantile",
+    "best_hard_step_le_999": 899,
+    "best_hard_reward_le_999": 0.35052083333333334,
+    "best_hard_avg_len_le_999": 7691.59901500651,
+    "last_step_le_999": 999,
+    "last_macro_reward_le_999": 0.4564499996185303,
+    "last_hard_reward_le_999": 0.34375,
+    "last_avg_eval_len_le_999": 7367.343991520183,
+    "last_hard_eval_len_le_999": 8557.042708333334
+  },
+  "overlong4k": {
+    "label": "Overlong 4k",
+    "best_hard_step_le_999": 999,
+    "best_hard_reward_le_999": 0.32916666666666666,
+    "best_hard_avg_len_le_999": 7251.038330696615,
+    "last_step_le_999": 999,
+    "last_macro_reward_le_999": 0.4438583341916402,
+    "last_hard_reward_le_999": 0.32916666666666666,
+    "last_avg_eval_len_le_999": 7251.038330696615,
+    "last_hard_eval_len_le_999": 8167.918229166667
+  },
+  "overlong8k": {
+    "label": "Overlong 8k",
+    "best_hard_step_le_999": 99,
+    "best_hard_reward_le_999": 0.2921875,
+    "best_hard_avg_len_le_999": 9096.619235286458,
+    "last_step_le_999": 999,
+    "last_macro_reward_le_999": 0.4000333326419194,
+    "last_hard_reward_le_999": 0.27760416666666665,
+    "last_avg_eval_len_le_999": 4796.025967154948,
+    "last_hard_eval_len_le_999": 5338.864583333334
+  },
+  "meanstd002": {
+    "label": "Mean/std a=0.02",
+    "best_hard_step_le_999": 299,
+    "best_hard_reward_le_999": 0.32135416666666666,
+    "best_hard_avg_len_le_999": 8949.474840104167,
+    "last_step_le_999": 999,
+    "last_macro_reward_le_999": 0.3930666675726573,
+    "last_hard_reward_le_999": 0.2739583333333333,
+    "last_avg_eval_len_le_999": 6173.62880933431,
+    "last_hard_eval_len_le_999": 7337.855729166667
+  },
+  "shortest005": {
+    "label": "Shortest a=0.05",
+    "best_hard_step_le_999": 0,
+    "best_hard_reward_le_999": 0.3072916666666667,
+    "best_hard_avg_len_le_999": 11055.483290299479,
+    "last_step_le_999": 999,
+    "last_macro_reward_le_999": 0.3791416654745738,
+    "last_hard_reward_le_999": 0.25833333333333336,
+    "last_avg_eval_len_le_999": 4611.327032478841,
+    "last_hard_eval_len_le_999": 5443.316666666667
+  },
+  "alp": {
+    "label": "ALP beta=1e-7",
+    "best_hard_step_le_999": 0,
+    "best_hard_reward_le_999": 0.2833333333333333,
+    "best_hard_avg_len_le_999": 11129.244923535156,
+    "last_step_le_999": 999,
+    "last_macro_reward_le_999": 0.14413333330949146,
+    "last_hard_reward_le_999": 0.026041666666666668,
+    "last_avg_eval_len_le_999": 125.71190822957355,
+    "last_hard_eval_len_le_999": 105.54479166666667
+  }
+}
