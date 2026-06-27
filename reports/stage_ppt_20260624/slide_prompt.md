@@ -13,7 +13,8 @@ BigMath 0.5B / GRPO / 16k max tokens / group size 16
 版式：
 
 - 左侧 35%-40% 放方法示意图。
-- 右侧 60%-65% 放实验对比图，上下两个 panel：上方 AIME24/25/26 + HMMT25 reward，下方 average eval response length。
+- 右侧 60%-65% 放实验对比图，上下两个 panel：上方 AIME24/25/26 + HMMT25 reward，下方 average eval response
+  length。
 - 底部放一句结论 callout。
 
 方法示意图内容：
@@ -41,25 +42,27 @@ penalty_i = -alpha * gate(solve_rate_g) * max(0, len_i - target_g) / target_g
 - Length panel：average eval response length，单位 k tokens。
 - 方法曲线：
   - Ours: length-quantile
+  - No length constraint
   - Overlong 4k
   - Overlong 8k
-  - Mean/std alpha=0.02
   - Shortest alpha=0.05
   - ALP beta=1e-7
 
 关键数值 callout：
 
 - Step 999: ours hard reward 0.344 @ 7.4k tokens。
-- Mean/std alpha=0.02: 0.274 @ 6.2k tokens，只省约 1.2k token，但 hard reward 低约 7 个点。
+- No length constraint: 0.364 @ 11.4k avg eval tokens，AIME/HMMT length 13.0k，质量高但 token
+  成本最高。
 - ALP beta=1e-7: 0.026 @ 0.1k tokens，出现 under-thinking。
 - Overlong 4k: 0.329 @ 7.3k tokens，接近我们的长度但 hard reward 更低。
 
 底部结论：
 
-相比 ALP、shortest 和 correct mean/std，length-quantile 的优势不在于更强惩罚，而在于选择性更好：只压缩已解决/容易题的冗余长度，同时给困难题保留推理预算。
+相比无长度约束、ALP、shortest 和 correct mean/std，length-quantile 的优势不在于追求最高 raw
+reward，而在于选择性更好：只压缩已解决/容易题的冗余长度，同时给困难题保留推理预算。
 
 可上传素材：
 
 - `method_schematic.png`：方法示意图。
-- `first1000_reward_length_comparison.png`：前 1000 step 分数/长度对比图。
-- `one_slide_mockup.png`：完整一页 mockup，可作为版式参考。
+- `first1000_metrics_dashboard.png`：前 1000 step reward/length 对比图。
+- `one_slide_mockup_v2.png`：完整一页 mockup，可作为版式参考。

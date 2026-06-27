@@ -1,6 +1,6 @@
 # 精简推理与 Token 效率优化技术报告
 
-更新时间：2026-06-24
+更新时间：2026-06-27
 
 状态：工作稿
 
@@ -137,6 +137,22 @@ shortest-correct 实现没有达到预期：它显著压短 response_len，同�
 - 当前判断：correct-only mean/std baseline 可作为高风险相关方法的负结果记录，但不应继续做简单 `alpha=0.01/0.02/0.05`
   sweep。下一步仍应优先推进 `length_quantile` 的 checkpoint 复评、稳健性小矩阵和 LASER-D / difficulty-aware
   baseline 的公式核对与最小忠实复现。
+
+2026-06-27 追加结论：
+
+- 补齐了此前缺失的 16k 无长度约束 baseline： `mtp_grpo_muon_16k_groupsize_16_lr_4e-5_20260625`。配置核对显示
+  `overlong_reward_penalty=false`、`shortest_correct_reward.enabled=false`、
+  `adaptive_length_reward.enabled=false`，日志中
+  `ppo_actor/overlong_penalty/avg=0`，可作为“无显式长度约束”的同协议对照。
+- 该 run 目前跑到 step `1029`，first 1k eval 可用。step `999` macro / hard reward 为
+  `0.474 / 0.364`，平均 eval len / AIME-HMMT len 为 `11.4k / 13.0k`；训练 raw reward /
+  response_len 为 `0.599 / 7.7k`。
+- 同 step `length_quantile` 为 macro / hard `0.456 / 0.344`，平均 eval len / AIME-HMMT len
+  `7.4k / 8.6k`。也就是说，无长度约束质量略高，但平均 eval token 多约 `55%`，AIME/HMMT token 多约 `51%`，且
+  AIME/HMMT `finish_reason/length` 平均约 `43%`，已经明显接近 16k 截断。
+- 结论边界需要更精确：`length_quantile` 不是在 first 1k 上超过“完全无长度成本”的质量上界；它的价值是以很小 hard reward 代价显著降低
+  token，并避免 ALP / shortest 这类 under-thinking。后续 PPT 和论文图应把 no-length baseline 作为质量 /
+  token 上界一并展示。
 
 ## 问题定义
 
@@ -1050,6 +1066,18 @@ normalized-alpha 兼容路径。`mode=alp` 当前不读取 `correct_only`、
 | `16k_overlong_8k`              | training complete    | 0.449 / 0.334             | 0.450 / 0.335 @ step 6299 | 5.2k / 5.7k               | 4.1k              |
 | `16k_overlong_4k`              | 未见完成标记         | 0.457 / 0.342             | 0.480 / 0.370 @ step 3699 | 7.3k / 8.1k               | 5.7k              |
 | `30k_overlong_8k`              | complete，有 timeout | 0.512 / 0.408             | 0.521 / 0.420 @ step 3983 | 13.6k / 15.1k             | 9.7k              |
+
+无长度约束 baseline（新增，first 1k）：
+
+| run                    | 状态                  | step | macro / hard reward | MATH500 reward / len | AIME/HMMT reward / len | train raw / len |
+| ---------------------- | --------------------- | ---- | ------------------- | -------------------- | ---------------------- | --------------- |
+| `16k_no_length_reward` | 已跑到 step `1029`    | 999  | 0.474 / 0.364       | 0.913 / 5.1k         | 0.364 / 13.0k          | 0.599 / 7.7k    |
+| `length_quantile`      | first-1k 同 step 对比 | 999  | 0.456 / 0.344       | 0.907 / 2.6k         | 0.344 / 8.6k           | 0.544 / 3.9k    |
+
+该 baseline 使用完整 `max_new_tokens=16384` 且不启用 overlong、shortest 或 adaptive length
+reward。它说明无长度约束可以继续用更长 reasoning 换取略高 reward，但已经不是 token-efficient 解：相对
+`length_quantile`，平均 eval token 多约 `55%`，AIME/HMMT token 多约 `51%`，且 AIME/HMMT 平均
+`finish_reason/length≈43%`。
 
 adaptive 分数据集 final 指标：
 

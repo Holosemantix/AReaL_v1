@@ -12,7 +12,9 @@ BigMath 0.5B / GRPO / 16k max tokens / group size 16 / first 1k training steps
 
 核心解释：
 
-mean/std baseline 可以从主图中剔除。它和我们的 length-quantile 不同：mean/std 是组内相对长度惩罚，会随着组内均值变短而继续追着正确样本压短；length-quantile 是有保护的目标长度构造，只在 solve-rate 足够高的 easy/solved group 上，对超过正确样本长度分位数和下界保护的冗余部分施压。
+mean/std baseline 可以从主图中剔除。它和我们的 length-quantile 不同：mean/std
+是组内相对长度惩罚，会随着组内均值变短而继续追着正确样本压短；length-quantile 是有保护的目标长度构造，只在 solve-rate 足够高的
+easy/solved group 上，对超过正确样本长度分位数和下界保护的冗余部分施压。
 
 版式：
 
@@ -51,6 +53,7 @@ penalty_i = -alpha * gate(solve_rate_g) * max(0, len_i - target_g) / target_g
 方法曲线保留：
 
 - Ours: length-quantile
+- No length constraint
 - Overlong 4k
 - Overlong 8k
 - Shortest alpha=0.05
@@ -61,13 +64,16 @@ penalty_i = -alpha * gate(solve_rate_g) * max(0, len_i - target_g) / target_g
 关键数值 callout：
 
 - Step 999: ours hard reward 0.344 @ 7.4k avg eval tokens。
+- No length constraint: 0.364 @ 11.4k avg eval tokens，AIME/HMMT length 13.0k，质量高但 token
+  成本最高。
 - Overlong 4k: 0.329 @ 7.3k，长度接近但 hard reward 更低。
 - ALP beta=1e-7: 0.026 @ 0.1k，明显 under-thinking。
 - MATH500 多数方法接近饱和，因此必须同时展示 AIME24/25/26 + HMMT25；只看 MATH500 会掩盖困难题能力差异。
 
 底部结论：
 
-length-quantile 的优势不是更强惩罚，而是更安全的目标构造：MATH500 保持高分，AIME24/25/26 + HMMT25 不被压垮，训练 reward 没有像 ALP/shortest 那样和短输出吸引子绑定。
+length-quantile 的优势不是追求最高 raw reward，而是在无长度约束 baseline 的质量附近显著降低 token：MATH500
+保持高分，AIME24/25/26 + HMMT25 不被压垮，训练 reward 没有像 ALP/shortest 那样和短输出吸引子绑定。
 
 可上传素材：
 

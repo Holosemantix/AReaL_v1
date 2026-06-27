@@ -23,6 +23,30 @@
       "train_incorrect_len": 4917.3193359375
     }
   },
+  "no_length": {
+    "label": "No length constraint",
+    "eval_last": {
+      "run": "no_length",
+      "label": "No length constraint",
+      "step": 999,
+      "macro_reward": 0.47377500028610225,
+      "hard_reward": 0.3640625,
+      "math500_reward": 0.9126250014305115,
+      "avg_eval_len": 11389.51458577474,
+      "hard_eval_len": 12959.788541666667,
+      "math500_len": 5108.418762207031
+    },
+    "train_last": {
+      "run": "no_length",
+      "label": "No length constraint",
+      "step": 999,
+      "train_raw_reward": 0.59912109375,
+      "train_task_reward": 0.59912109375,
+      "train_response_len": 7719.2041015625,
+      "train_correct_len": 6757.181640625,
+      "train_incorrect_len": 9437.3642578125
+    }
+  },
   "overlong4k": {
     "label": "Overlong 4k",
     "eval_last": {
@@ -30,8 +54,8 @@
       "label": "Overlong 4k",
       "step": 999,
       "macro_reward": 0.4438583341916402,
-      "hard_reward": 0.32916666666666666,
-      "math500_reward": 0.9026250042915345,
+      "hard_reward": 0.3291666666666666,
+      "math500_reward": 0.9026250042915344,
       "avg_eval_len": 7251.038330696615,
       "hard_eval_len": 8167.918229166667,
       "math500_len": 3583.518736816406
@@ -54,7 +78,7 @@
       "label": "Overlong 8k",
       "step": 999,
       "macro_reward": 0.4000333326419194,
-      "hard_reward": 0.27760416666666665,
+      "hard_reward": 0.2776041666666666,
       "math500_reward": 0.8897499965429306,
       "avg_eval_len": 4796.025967154948,
       "hard_eval_len": 5338.864583333334,
@@ -65,7 +89,7 @@
       "label": "Overlong 8k",
       "step": 999,
       "train_raw_reward": 0.48828125,
-      "train_task_reward": 0.48666131496429443,
+      "train_task_reward": 0.4866613149642944,
       "train_response_len": 4023.4384765625,
       "train_correct_len": 3584.10791015625,
       "train_incorrect_len": 4676.73876953125
@@ -78,7 +102,7 @@
       "label": "Shortest a=0.05",
       "step": 999,
       "macro_reward": 0.3791416654745738,
-      "hard_reward": 0.25833333333333336,
+      "hard_reward": 0.2583333333333333,
       "math500_reward": 0.8623749940395355,
       "avg_eval_len": 4611.327032478841,
       "hard_eval_len": 5443.316666666667,
@@ -101,19 +125,19 @@
       "run": "alp",
       "label": "ALP beta=1e-7",
       "step": 999,
-      "macro_reward": 0.14413333330949146,
-      "hard_reward": 0.026041666666666668,
+      "macro_reward": 0.1441333333094914,
+      "hard_reward": 0.0260416666666666,
       "math500_reward": 0.6164999998807907,
-      "avg_eval_len": 125.71190822957355,
-      "hard_eval_len": 105.54479166666667,
-      "math500_len": 206.38037448120116
+      "avg_eval_len": 125.71190822957357,
+      "hard_eval_len": 105.54479166666668,
+      "math500_len": 206.3803744812012
     },
     "train_last": {
       "run": "alp",
       "label": "ALP beta=1e-7",
       "step": 999,
       "train_raw_reward": 0.3046875,
-      "train_task_reward": 0.30467987060546875,
+      "train_task_reward": 0.3046798706054687,
       "train_response_len": 217.71337890625,
       "train_correct_len": 341.5705261230469,
       "train_incorrect_len": 328.1355285644531
